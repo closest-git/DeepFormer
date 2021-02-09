@@ -178,6 +178,7 @@ class BertImage(nn.Module):
         self.classifier = nn.Linear(self.hidden_size, num_classes)
         # self.pixelizer = nn.Linear(self.hidden_size, 3)
         self.register_buffer("attention_mask", torch.tensor(1.0))
+        # self.pos_embedding = nn.Parameter(torch.randn(1, 8 , 8,self.hidden_size))
 
         # self.mask_embedding = Parameter(torch.zeros(self.hidden_size))
         # self.cls_embedding = Parameter(torch.zeros(self.hidden_size))
@@ -289,6 +290,7 @@ class BertImage(nn.Module):
 
         # feature upscale to BERT dimension
         batch_features = self.features_upscale(batch_features)
+        # batch_features += self.pos_embedding
 
         b, w, h, _ = batch_features.shape
 

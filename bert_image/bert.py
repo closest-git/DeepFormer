@@ -302,6 +302,7 @@ except ImportError:
         "Better speed can be achieved with apex installed from https://www.github.com/nvidia/apex ."
     )
     from torch.nn import LayerNorm as BertLayerNorm
+    # from torch.nn import BatchNorm2d as BertLayerNorm
 
     # class BertLayerNorm(nn.Module):
     #     def __init__(self, hidden_size, eps=1e-12):
@@ -553,7 +554,7 @@ class GaussianSelfAttention(nn.Module):
         self.attention_centers = nn.Parameter(
             torch.zeros(self.num_attention_heads, 2).normal_(0.0, config.gaussian_init_mu_std)
         )
-        self.isSigma = True       
+        self.isSigma = True   
 
         if config.attention_isotropic_gaussian:
             # only one scalar (inverse standard deviation)
@@ -570,10 +571,17 @@ class GaussianSelfAttention(nn.Module):
             self.attention_spreads = attention_spreads
             attention_spreads = self.get_heads_target_vectors()
             print(attention_spreads)
+            self.sigmaLayer = nn.Linear(5,self.num_attention_heads)   
+            with torch.no_grad():
+                self.sigmaLayer.weight.copy_(attention_spreads)
+        else:
+            self.attention_spreads = nn.Parameter(attention_spreads)
 
-        self.attention_spreads = nn.Parameter(attention_spreads)
-
-        self.value = nn.Linear(self.all_head_size, config.hidden_size)
+        self.isMaxout = False   #useless!!!
+        if self.isMaxout:
+            pass
+        else:
+            self.fc_allhead2hidden = nn.Linear(self.all_head_size, config.hidden_size)
 
         if not config.attention_gaussian_blur_trick:
             # relative encoding grid (delta_x, delta_y, delta_x**2, delta_y**2, delta_x * delta_y)
@@ -611,10 +619,10 @@ class GaussianSelfAttention(nn.Module):
         Returns: tensor of attention probabilities (width, height, num_head, width, height)
         """
         if self.isSigma:
-            u = self.attention_spreads
+            # u = self.attention_spreads
             d = 5
-            R1 = self.R[:width,:height,:width,:height,:].reshape(-1,d)
-            attention_scores = R1@(u.permute(1,0))
+            R1 = self.R[:width,:height,:width,:height,:].reshape(-1,d).contiguous()
+            attention_scores = self.sigmaLayer(R1)  #R1@(u.permute(1,0))
             attention_scores = attention_scores.view(width,height,width,height,-1).permute(0,1,4,2,3).contiguous()
         else:
             u = self.get_heads_target_vectors()
@@ -702,11 +710,18 @@ class GaussianSelfAttention(nn.Module):
             else:   #just same as einsum 
                 Ta = hidden_states.permute(0,3,1,2).reshape(-1,w*h)         #bEkl
                 Tb = attention_probs.contiguous().permute(3,4,0,1,2).reshape(w*h,-1)         #klijH
-                input_values = (Ta@Tb).contiguous().reshape(b,E, w, h, -1).permute(0,2,3,1,4).reshape(b,w, h, -1)    #bEijH => bij(EH=1024)
+                all_heads = (Ta@Tb).contiguous().reshape(b,E, w, h, -1).permute(0,2,3,1,4).reshape(b,w, h, -1)    #bEijH => bij(EH=1024)
         else:
-            input_values = self.blured_attention(hidden_states)
+            all_heads = self.blured_attention(hidden_states)
 
-        output_value = self.value(input_values)
+        if self.isMaxout:
+            all_heads = all_heads.reshape(-1, self.num_attention_heads)
+            # h_norm = torch.norm(all_heads, dim=0)
+            # _,max_id = torch.max(h_norm,0)
+            max_id = 0
+            output_value = all_heads[:,max_id].reshape(b,w, h, -1)
+        else:
+            output_value = self.fc_allhead2hidden(all_heads)
 
         if self.output_attentions:
             return attention_probs, output_value

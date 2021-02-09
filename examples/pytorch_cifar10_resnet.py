@@ -126,47 +126,51 @@ def train(epoch):
     x_info = ""
     t0 = time.time()
     batch_size = config.batch_size
-    with tqdm(total=len(train_loader), position=0, leave=True, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}', 
-              desc='Epoch {:3d}/{:3d}'.format(epoch + 1, config.epochs),
-              disable=not verbose) as t:
-        for batch_idx, (data, target) in enumerate(train_loader):
-            if args.cuda:                
-                data, target = data.cuda(), target.cuda()
-            optimizer.zero_grad()
+    report_frequency = (int)(len(train_loader)/100.0+0.5)
+    # with tqdm(total=len(train_loader), position=0, leave=True, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}', 
+    #           desc='Epoch {:3d}/{:3d}'.format(epoch + 1, config.epochs),
+    #           disable=not verbose) as t:      always new line in WINDOWS!!!
+    for batch_idx, (data, target) in enumerate(train_loader):
+        if args.cuda:                
+            data, target = data.cuda(), target.cuda()
+        optimizer.zero_grad()
 
-            for i in range(0, len(data),batch_size ): 
-                data_batch = data[i:i + batch_size]
-                target_batch = target[i:i + batch_size]
-                if model_name == "distiller":
-                    loss = distiller(data_batch, target_batch)
-                    output = model(data_batch)
-                else:
-                    output = model(data_batch)
-                    if model_name == "vit":
-                        output = F.log_softmax(output, dim=1)
-                        loss = F.nll_loss(output, target_batch)
-                    else:
-                        loss = criterion(output, target_batch)
-                with torch.no_grad():
-                    train_loss.update(loss)
-                    train_accuracy.update(accuracy(output, target_batch))
-                loss.div_(math.ceil(float(len(data)) / batch_size))
-                loss.backward()
-            if isHVD:
-                optimizer.synchronize()
-            acc = train_accuracy.avg.item()
-            if use_kfac:
-                preconditioner.step(epoch=epoch,accuracy=acc)                
-                x_info = preconditioner.dump(epoch + 1)
-            if isHVD:
-                with optimizer.skip_synchronize():
-                    optimizer.step()
+        for i in range(0, len(data),batch_size ): 
+            data_batch = data[i:i + batch_size]
+            target_batch = target[i:i + batch_size]
+            if model_name == "distiller":
+                loss = distiller(data_batch, target_batch)
+                output = model(data_batch)
             else:
+                output = model(data_batch)
+                if model_name == "vit":
+                    output = F.log_softmax(output, dim=1)
+                    loss = F.nll_loss(output, target_batch)
+                else:
+                    loss = criterion(output, target_batch)
+            with torch.no_grad():
+                train_loss.update(loss)
+                train_accuracy.update(accuracy(output, target_batch))
+            loss.div_(math.ceil(float(len(data)) / batch_size))
+            loss.backward()
+        if isHVD:
+            optimizer.synchronize()
+        acc = train_accuracy.avg.item()
+        if use_kfac:
+            preconditioner.step(epoch=epoch,accuracy=acc)                
+            x_info = preconditioner.dump(epoch + 1,log_writer)
+        if isHVD:
+            with optimizer.skip_synchronize():
                 optimizer.step()
+        else:
+            optimizer.step()
 
-            lr_opt = optimizer.param_groups[0]['lr']
-            # t.set_postfix_str("lr={:.6f}, loss: {:.4f}, acc: {:.2f}%, {},T={:.1f}".format(lr_opt,train_loss.avg.item(), 100*acc,x_info,time.time()-t0))
-            t.update(1)
+        lr_opt = optimizer.param_groups[0]['lr']
+        # t.set_postfix_str("lr={:.6f}, loss: {:.4f}, acc: {:.2f}%, {},T={:.1f}".format(lr_opt,train_loss.avg.item(), 100*acc,x_info,time.time()-t0))
+        # t.update(1)
+        if batch_idx % report_frequency == 0:
+            print(f"\rEpoch {epoch + 1:3d}/{config.epochs:3d}\t{batch_idx}/{len(train_loader)} \tlr={lr_opt:.3f}, loss: {train_loss.avg.item():.4f}, acc: {100*acc:.2f}%, {x_info},T={time.time()-t0:.1f}",end="")
+    print(f"")
 
     if not STEP_FIRST:
         for scheduler in lr_scheduler:
@@ -226,7 +230,7 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
     torch.backends.cudnn.benchmark = True
     kfac.seed_everything(42)
-    sFac = f"KFAC*{args.kfac_update_freq}" if args.kfac_update_freq>0 else ""
+    sFac = f"KFAC_" if args.kfac_update_freq>0 else ""
 # args.log_dir = os.path.join(args.log_dir, "__{}_{}_{}_{}".format(args.model, sFac, sGPU,datetime.datetime.now().strftime('%m-%d_%H-%M')))
     print(args)
     # os.makedirs(args.log_dir, exist_ok=True)

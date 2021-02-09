@@ -121,6 +121,7 @@ class KFAC(optim.Optimizer):
         self.diag_blocks = diag_blocks
         self.diag_warmup = diag_warmup
         self.batch_averaged = batch_averaged
+        self.hvd_size = 1   #hvd.size()
         
         # Compute ideal value for `distribute_layer_factors` based on
         # registered module count
@@ -132,12 +133,20 @@ class KFAC(optim.Optimizer):
 
         self.have_cleared_Q = True if self.diag_warmup == 0 else False
         self.eps = 1e-10  # for numerical stability
-        self.rank_iter = cycle(list(range(hvd.size())))
+        self.rank_iter = cycle(list(range(self.hvd_size)))
         self.T_all = 0
     
-    def dump(self,nEpoch):
+    def dump(self,nEpoch,log_writer):
         # info = "@"
         info = f"lr={self.lr:.4f} nu={self.nu:.1e} T={self.T_all/nEpoch:.1f}"
+        params = self.param_groups[0]
+
+        if log_writer:
+            log_writer.add_scalar('KFAC/nu', self.nu,nEpoch)
+            log_writer.add_scalar('KFAC/lr', self.lr,nEpoch)
+            log_writer.add_scalar('KFAC/damping', params['damping'],nEpoch)
+            log_writer.add_scalar('KFAC/fac_update_freq', params['fac_update_freq'],nEpoch)
+            log_writer.add_scalar('KFAC/kfac_update_freq', params['kfac_update_freq'],nEpoch)
         return info
 
     def _save_input(self, module, input):
@@ -215,7 +224,7 @@ class KFAC(optim.Optimizer):
           ranks: list of horovod ranks (i.e. workers) to use when computing
               the eigendecomposition.
         """
-        if hvd.rank() in ranks:
+        if self.hvd_size==1:        #hvd.rank() in ranks
             self._distributed_compute_eigen(self.m_A[module], 
                     self.m_QA[module], self.m_dA[module], ranks)
         else:
@@ -227,7 +236,7 @@ class KFAC(optim.Optimizer):
 
         See `_update_eigen_A` for more info`
         """
-        if hvd.rank() in ranks:
+        if self.hvd_size==1:    #hvd.rank() in ranks:
             self._distributed_compute_eigen(self.m_G[module], 
                     self.m_QG[module], self.m_dG[module], ranks)
         else:
@@ -248,7 +257,7 @@ class KFAC(optim.Optimizer):
             evalues (tensor): tensor to save eigenvalues of `factor` to
             ranks (list): list of ranks that will enter this function
         """
-        i = ranks.index(hvd.rank())
+        i = 0   #ranks.index(hvd.rank())
         n = len(ranks)
         if n > min(factor.shape):
             n = min(factor.shape)
@@ -341,6 +350,22 @@ class KFAC(optim.Optimizer):
             if module.bias is not None:
                 module.bias.grad.data.copy_(v[1])
                 module.bias.grad.data.mul_(nu)
+    
+    def _update_scale_grad_0(self, updates):        
+        for module in self.modules:
+            vg_sum = 0
+            v = updates[module]
+            vg_sum += (v[0] * module.weight.grad.data * self.lr ** 2).sum().item()
+            if module.bias is not None:
+                vg_sum += (v[1] * module.bias.grad.data * self.lr ** 2).sum().item()
+            nu = min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
+            self.nu = nu
+
+            module.weight.grad.data.copy_(v[0])
+            module.weight.grad.data.mul_(nu)
+            if module.bias is not None:
+                module.bias.grad.data.copy_(v[1])
+                module.bias.grad.data.mul_(nu)
 
     def step(self, closure=None, epoch=None,accuracy=0):
         """Perform one K-FAC step
@@ -378,7 +403,7 @@ class KFAC(optim.Optimizer):
         if self.steps % self.fac_update_freq == 0:
             self._update_A()
             self._update_G()
-            if hvd.size() > 1:
+            if self.hvd_size > 1:
                 self._allreduce_factors()
 
         # if we are switching from no diag approx to approx, we need to clear
@@ -404,7 +429,7 @@ class KFAC(optim.Optimizer):
                 self._update_eigen_A(module, ranks_a)
                 self._update_eigen_G(module, ranks_g)
 
-            if hvd.size() > 1:
+            if self.hvd_size > 1:
                 self._allreduce_eigendecomp()
 
         for module in self.modules:
