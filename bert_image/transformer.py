@@ -8,6 +8,7 @@ import torchvision.models as models
 from torch.autograd import Variable
 from enum import Enum
 from collections import OrderedDict
+from .guided_filter import SelfGuidedFilter
 
 def split_dict(d, first_predicate):
     """split the dictionary d into 2 dictionaries, first one contains elements validating first_predicate"""
@@ -172,13 +173,14 @@ class BertImage(nn.Module):
 
         self.features_upscale = nn.Linear(num_channels_in, self.hidden_size)
         # self.features_downscale = nn.Linear(self.hidden_size, num_channels_in)
-
+        self.hidden_dims=[16,64,256,512,512,512,512,512]
         # output all attentions, won't return them if self.output_attentions is False
-        self.encoder = BertEncoder(bert_config, output_attentions=True)
+        self.encoder = BertEncoder(bert_config, output_attentions=True,hidden_dim=self.hidden_dims)
         self.classifier = nn.Linear(self.hidden_size, num_classes)
         # self.pixelizer = nn.Linear(self.hidden_size, 3)
         self.register_buffer("attention_mask", torch.tensor(1.0))
         # self.pos_embedding = nn.Parameter(torch.randn(1, 8 , 8,self.hidden_size))
+        # self.guided = SelfGuidedFilter(3)
 
         # self.mask_embedding = Parameter(torch.zeros(self.hidden_size))
         # self.cls_embedding = Parameter(torch.zeros(self.hidden_size))
@@ -272,7 +274,7 @@ class BertImage(nn.Module):
                 Y = Y.view(b, w // kernel, h // kernel, kernel * kernel * c).contiguous()
                 Y = Y.permute(0, 2, 1, 3).contiguous()
                 return Y
-
+            
             # reshape from NCHW to NHWC
             batch_features = batch_images.permute(0, 2, 3, 1)
             batch_features = downsample_concatenate(batch_features, self.pooling_concatenate_size)
@@ -284,7 +286,7 @@ class BertImage(nn.Module):
 
         else:
             batch_features = batch_images
-            feature_mask = batch_mask
+            feature_mask = batch_mask            
             # reshape from NCHW to NHWC
             batch_features = batch_features.permute(0, 2, 3, 1)
 

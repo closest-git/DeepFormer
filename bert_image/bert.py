@@ -37,6 +37,7 @@ from torch.nn import functional as F
 from .bert_utils import cached_path, WEIGHTS_NAME, CONFIG_NAME
 from .gaussian import gaussian_kernel_2d
 from vit_pytorch import sparsemax, entmax15
+from .guided_filter import SelfGuidedFilter
 
 MAX_WIDTH_HEIGHT = 64
 
@@ -541,6 +542,7 @@ class GaussianSelfAttention(nn.Module):
         self.gaussian_init_sigma_std = config.gaussian_init_sigma_std
         self.config = config
         # self.attention_dropout = nn.Dropout(p=0.1)
+        self.guided_filter = None   #SelfGuidedFilter(3,8,8)
 
         self.num_attention_heads = config.num_attention_heads
         self.attention_head_size = config.hidden_size
@@ -700,7 +702,9 @@ class GaussianSelfAttention(nn.Module):
         assert len(hidden_states.shape) == 4
         b, w, h, E = hidden_states.shape
         # H is the number of head(nHead = 8)    h is the height of image(32,224,...)
-
+        if self.guided_filter is not None:
+            hidden_states = self.guided_filter(hidden_states.permute(0,3,2,1)).permute(0,2,3,1)
+            
         if not self.attention_gaussian_blur_trick:
             attention_probs = self.get_attention_probs(w, h)
             attention_probs = self.dropout(attention_probs)
@@ -712,15 +716,16 @@ class GaussianSelfAttention(nn.Module):
                 Tb = attention_probs.contiguous().permute(3,4,0,1,2).reshape(w*h,-1)         #klijH
                 all_heads = (Ta@Tb).contiguous().reshape(b,E, w, h, -1).permute(0,2,3,1,4).reshape(b,w, h, -1)    #bEijH => bij(EH=1024)
         else:
-            all_heads = self.blured_attention(hidden_states)
+            all_heads = self.blured_attention(hidden_states)        
 
         if self.isMaxout:
             all_heads = all_heads.reshape(-1, self.num_attention_heads)
             # h_norm = torch.norm(all_heads, dim=0)
             # _,max_id = torch.max(h_norm,0)
-            max_id = 0
-            output_value = all_heads[:,max_id].reshape(b,w, h, -1)
-        else:
+            # max_id = 0
+            # output_value = all_heads[:,max_id].reshape(b,w, h, -1)
+            output_value =  torch.mean(all_heads, dim=1).reshape(b,w, h, -1)
+        else:            
             output_value = self.fc_allhead2hidden(all_heads)
 
         if self.output_attentions:
@@ -912,7 +917,7 @@ class BertOutput(nn.Module):
 
 
 class BertLayer(nn.Module):
-    def __init__(self, config, output_attentions=False, keep_multihead_output=False):
+    def __init__(self, config, output_attentions=False, keep_multihead_output=False,hidden_in=128,hidden_out=128):
         super(BertLayer, self).__init__()
         self.output_attentions = output_attentions
         self.attention = BertAttention(
@@ -933,13 +938,16 @@ class BertLayer(nn.Module):
 
 
 class BertEncoder(nn.Module):
-    def __init__(self, config, output_attentions=False, keep_multihead_output=False):
+    def __init__(self, config, output_attentions=False, keep_multihead_output=False,hidden_dim=None):
         super(BertEncoder, self).__init__()
         self.output_attentions = output_attentions
-        layer_constructor = lambda: BertLayer(
-            config, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output
-        )
-        self.layer = nn.ModuleList([layer_constructor() for _ in range(config.num_hidden_layers)])
+        # layer_constructor = lambda: BertLayer(
+        #     config, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output
+        # )
+        # self.layer = nn.ModuleList([layer_constructor() for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([BertLayer(
+             config, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output,hidden_in=hidden_dim[id],hidden_out=hidden_dim[id+1]
+        ) for id in range(config.num_hidden_layers)])
 
         if config.use_learned_2d_encoding and config.share_position_encoding:
             for layer in self.layer[1:]:
