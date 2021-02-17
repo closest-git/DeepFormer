@@ -10,6 +10,7 @@ from enum import Enum
 from collections import OrderedDict
 from .guided_filter import SelfGuidedFilter
 
+
 def split_dict(d, first_predicate):
     """split the dictionary d into 2 dictionaries, first one contains elements validating first_predicate"""
     first, second = OrderedDict(), OrderedDict()
@@ -148,7 +149,9 @@ class BertImage(nn.Module):
 
         self.output_attentions = output_attentions
         self.with_resnet = config["pooling_use_resnet"]
-        self.hidden_size = config["hidden_size"]
+        # self.hidden_size = config["hidden_size"]
+        # self.hidden_dims=[32,64,256,256,256]
+        self.hidden_dims=[128,128,128,128,128]
         self.pooling_concatenate_size = config["pooling_concatenate_size"]
         assert (config["pooling_concatenate_size"] == 1) or (
             not config["pooling_use_resnet"]
@@ -171,12 +174,12 @@ class BertImage(nn.Module):
 
         bert_config = BertConfig.from_dict(config)
 
-        self.features_upscale = nn.Linear(num_channels_in, self.hidden_size)
+        self.features_upscale = nn.Linear(num_channels_in, self.hidden_dims[0])        #self.hidden_size
         # self.features_downscale = nn.Linear(self.hidden_size, num_channels_in)
-        self.hidden_dims=[16,64,256,512,512,512,512,512]
+        
         # output all attentions, won't return them if self.output_attentions is False
         self.encoder = BertEncoder(bert_config, output_attentions=True,hidden_dim=self.hidden_dims)
-        self.classifier = nn.Linear(self.hidden_size, num_classes)
+        self.classifier = nn.Linear(self.hidden_dims[-1], num_classes)
         # self.pixelizer = nn.Linear(self.hidden_size, 3)
         self.register_buffer("attention_mask", torch.tensor(1.0))
         # self.pos_embedding = nn.Parameter(torch.randn(1, 8 , 8,self.hidden_size))
