@@ -28,6 +28,7 @@ import tempfile
 import sys
 from io import open
 import numbers
+import torchvision
 
 import torch
 from torch import nn
@@ -36,6 +37,7 @@ from torch.nn import functional as F
 
 from .bert_utils import cached_path, WEIGHTS_NAME, CONFIG_NAME
 from .gaussian import *
+from .gabor_filter import *
 # from vit_pytorch import sparsemax, entmax15
 # from .guided_filter import SelfGuidedFilter
 
@@ -194,7 +196,8 @@ class BertConfig(object):
         share_position_encoding=None,
         use_attention_data=None,
         query_positional_score=None,
-        use_gaussian_attention=None,
+        # use_gaussian_attention=None,
+        use_attention="gaussian",
         add_positional_encoding_to_input=None,
         positional_encoding=None,
         max_positional_encoding=None,
@@ -250,7 +253,7 @@ class BertConfig(object):
             self.initializer_range = initializer_range
             self.layer_norm_eps = layer_norm_eps
             self.use_learned_2d_encoding = use_learned_2d_encoding
-            self.use_gaussian_attention = use_gaussian_attention
+            self.use_attention = use_attention
             self.positional_encoding = positional_encoding
             self.max_positional_encoding = max_positional_encoding
             self.attention_gaussian_blur_trick = attention_gaussian_blur_trick
@@ -297,13 +300,14 @@ class BertConfig(object):
 
 
 try:
-    from apex.normalization.fused_layer_norm import FusedLayerNorm as BertLayerNorm
+    from apex.normalization.fused_layer_norm import FusedLayerNorm as Former_LayerNorm
 except ImportError:
     logger.info(
         "Better speed can be achieved with apex installed from https://www.github.com/nvidia/apex ."
     )
-    from torch.nn import LayerNorm as BertLayerNorm
-    # from torch.nn import BatchNorm2d as BertLayerNorm
+    # from torch.nn import LayerNorm as Former_LayerNorm
+    from torch.nn import Identity as Former_LayerNorm
+    # from torch.nn import BatchNorm2d as Former_LayerNorm
 
     # class BertLayerNorm(nn.Module):
     #     def __init__(self, hidden_size, eps=1e-12):
@@ -600,11 +604,24 @@ class BertSelfAttention(nn.Module):
         return context_layer
 
 
-class BertSelfOutput(nn.Module):
+class BertOutput(nn.Module):
+    def __init__(self,hidden_out, config):
+        super(BertOutput, self).__init__()
+        self.dense = nn.Linear(config.intermediate_size, hidden_out)
+        self.LayerNorm = Former_LayerNorm(hidden_out, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def forward(self, hidden_states, input_tensor):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        return hidden_states
+
+class Residual_Noraml(nn.Module):
     def __init__(self,hidden_in, config):
-        super(BertSelfOutput, self).__init__()
+        super(Residual_Noraml, self).__init__()
         self.dense = nn.Linear(hidden_in,hidden_in) #config.hidden_size, config.hidden_size
-        self.LayerNorm = BertLayerNorm(hidden_in, eps=config.layer_norm_eps)
+        self.LayerNorm = Former_LayerNorm(hidden_in, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
@@ -618,22 +635,36 @@ class BertAttention(nn.Module):
     def __init__(self, config,hidden_in, output_attentions=False, keep_multihead_output=False):
         super(BertAttention, self).__init__()
         self.output_attentions = output_attentions
-        self.flatten_image = not config.use_gaussian_attention and not config.use_learned_2d_encoding
-        self.use_gaussian_attention = config.use_gaussian_attention
+        self.use_attention = config.use_attention
+        #   MHSA - multi-head self-attention
+        if False:   #v0.1
+            self.flatten_image = not config.use_gaussian_attention and not config.use_learned_2d_encoding
+            self.use_gaussian_attention = config.use_gaussian_attention           
+
+            assert not config.use_gaussian_attention or not config.use_learned_2d_encoding  # TODO change to enum args
+
+            if config.use_gaussian_attention:
+                attention_cls = GaussianSelfAttention
+            elif config.use_learned_2d_encoding:
+                attention_cls = Learned2DRelativeSelfAttention
+            else:
+                attention_cls = BertSelfAttention
+            self.MHSA = attention_cls(config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output)
+        else:   #more attention
+            self.flatten_image = self.use_attention=="v0"            
+            if self.use_attention=="gaussian":
+                attention_cls = GaussianSelfAttention
+            elif self.use_attention=="learned_2d_encoding":
+                attention_cls = Learned2DRelativeSelfAttention
+            elif self.use_attention=="gabor":
+                attention_cls = GaborSelfAttention
+            else:
+                attention_cls = BertSelfAttention
+            self.MHSA = attention_cls(config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output)
         self.config = config
 
-        assert not config.use_gaussian_attention or not config.use_learned_2d_encoding  # TODO change to enum args
-
-        if config.use_gaussian_attention:
-            attention_cls = GaussianSelfAttention
-        elif config.use_learned_2d_encoding:
-            attention_cls = Learned2DRelativeSelfAttention
-        else:
-            attention_cls = BertSelfAttention
-
-        self.self = attention_cls(config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output)
-
-        self.output = BertSelfOutput(hidden_in,config)
+        # self.self = attention_cls(config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output)
+        self.residual = Residual_Noraml(hidden_in,config)
 
     def prune_heads(self, heads):
         mask = torch.ones(self.self.num_attention_heads, self.self.attention_head_size)
@@ -641,14 +672,15 @@ class BertAttention(nn.Module):
             mask[head] = 0
         mask = mask.view(-1).contiguous().eq(1)
         index = torch.arange(len(mask))[mask].long()
-
+        dim = 1
         # Prune linear layers
-        if not self.use_gaussian_attention:
+        if not self.use_attention=="gaussian":         #self.use_gaussian_attention:
             self.self.query = prune_linear_layer(self.self.query, index)
             self.self.key = prune_linear_layer(self.self.key, index)
             self.output.dense = prune_linear_layer(self.output.dense, index, dim=1)
+            dim = 0 
 
-        if self.use_gaussian_attention:
+        if self.use_attention=="gaussian":              #self.use_gaussian_attention:
             device = self.self.attention_spreads.data.device
             keep_heads = torch.ones(self.self.num_attention_heads, device=device, dtype=torch.bool)
             for head in heads:
@@ -656,7 +688,7 @@ class BertAttention(nn.Module):
             self.self.attention_spreads.data = self.self.attention_spreads.data[keep_heads].contiguous()
             self.self.attention_centers.data = self.self.attention_centers.data[keep_heads].contiguous()
 
-        dim = 0 if not self.use_gaussian_attention else 1
+        # dim = 0 if not self.use_gaussian_attention else 1
         self.self.value = prune_linear_layer(self.self.value, index, dim=dim)
         # Update hyper params
         self.self.num_attention_heads = self.self.num_attention_heads - len(heads)
@@ -664,7 +696,7 @@ class BertAttention(nn.Module):
 
     def reset_heads(self, heads):
         """Only for Gaussian Attention"""
-        assert self.use_gaussian_attention
+        assert self.use_attention=="gaussian"       #self.use_gaussian_attention
         self.self.reset_heads(heads)
 
     def forward(self, input_tensor, attention_mask, head_mask=None):
@@ -673,10 +705,10 @@ class BertAttention(nn.Module):
             batch, width, height, d = input_tensor.shape
             input_tensor = input_tensor.view([batch, -1, d])
 
-        self_output = self.self(input_tensor, attention_mask, head_mask)
+        self_output = self.MHSA(input_tensor, attention_mask, head_mask)
         if self.output_attentions:
             attentions, self_output = self_output
-        attention_output = self.output(self_output, input_tensor)
+        attention_output = self.residual(self_output, input_tensor)
 
         if is_image and self.flatten_image:
             attention_output = attention_output.view([batch, width, height, -1])
@@ -703,35 +735,33 @@ class BertIntermediate(nn.Module):
         return hidden_states
 
 
-class BertOutput(nn.Module):
-    def __init__(self,hidden_out, config):
-        super(BertOutput, self).__init__()
-        self.dense = nn.Linear(config.intermediate_size, hidden_out)
-        self.LayerNorm = BertLayerNorm(hidden_out, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-    def forward(self, hidden_states, input_tensor):
-        hidden_states = self.dense(hidden_states)
-        hidden_states = self.dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
-        # hidden_states = self.LayerNorm(hidden_states )
-        return hidden_states
-
-
 class BertLayer(nn.Module):
-    def __init__(self, config, output_attentions=False, keep_multihead_output=False,hidden_in=128,hidden_out=128):
+    def __init__(self, config, output_attentions=False, keep_multihead_output=False,hidden_in=128,hidden_out=128,id=0):
         super(BertLayer, self).__init__()
+        self.name = f"Lay{id}"
+        self.config = config
         self.output_attentions = output_attentions
         self.attention = BertAttention(
             config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output
         )
         self.intermediate = BertIntermediate(hidden_in,config)
         self.output = BertOutput(hidden_out,config)
+        # self.log_writer = self.config.logger        
 
     def forward(self, hidden_states, attention_mask, head_mask=None):
-        attention_output = self.attention(hidden_states, attention_mask, head_mask)
+        attention_output = self.attention(hidden_states, attention_mask, head_mask)    
+        nMostPic = 64    
+        width,height = self.config.INPUT_W,  self.config.INPUT_H
         if self.output_attentions:
             attentions, attention_output = attention_output
+            # pics = attention_output[0:63,:,:,0].contiguous().view(-1,1,8,8)
+            pics = attentions.contiguous().view(-1,1,width,height)[0:nMostPic,:,:,:]
+            LOG = self.config.logger
+            if LOG is not None and LOG.batch_idx==0:
+                grid = torchvision.utils.make_grid(pics,nrow=8,padding=2)      #torchvision.utils.make_grid(tensors,nrow=nr_, padding=pad_)
+                title = f"{self.name}/{LOG.epoch}_{LOG.batch_idx}"
+                # LOG.add_image(title, grid, LOG.epoch)
+                # show_tensors(pics, nr_=8, pad_=10,title=f"{self.name}")
         intermediate_output = self.intermediate(attention_output)
         layer_output = self.output(intermediate_output, attention_output)
         if self.output_attentions:
@@ -748,7 +778,7 @@ class BertEncoder(nn.Module):
         # )
         # self.layer = nn.ModuleList([layer_constructor() for _ in range(config.num_hidden_layers)])
         self.layer = nn.ModuleList([BertLayer(
-             config, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output,hidden_in=hidden_dim[id],hidden_out=hidden_dim[id+1]
+             config, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output,hidden_in=hidden_dim[id],hidden_out=hidden_dim[id+1],id=id
         ) for id in range(config.num_hidden_layers)])
 
         if config.use_learned_2d_encoding and config.share_position_encoding:

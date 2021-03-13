@@ -8,6 +8,7 @@ from kfac.utils import update_running_avg
 from kfac.utils import try_contiguous
 from kfac.utils import cycle
 from kfac.utils import get_block_boundary
+from bert_image import *
 
 class KFAC(optim.Optimizer):
     """KFAC Distributed Gradient Preconditioner
@@ -67,11 +68,12 @@ class KFAC(optim.Optimizer):
                  batch_averaged=True,
                  diag_blocks=1,
                  diag_warmup=0,
-                 distribute_layer_factors=None):
+                 distribute_layer_factors=None,
+                 gradient_clip = "agc"):
 
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
-        if not 0.0 < factor_decay <= 1:
+        if not 0.0 <= factor_decay <= 1:
             raise ValueError("Invalid factor decay rate: {}".format(factor_decay))
         if not 0.0 < damping:
             raise ValueError("Invalid damping: {}".format(damping))
@@ -95,7 +97,9 @@ class KFAC(optim.Optimizer):
         defaults = dict(lr=lr,
                         damping=damping,
                         fac_update_freq=fac_update_freq,
-                        kfac_update_freq=kfac_update_freq) 
+                        kfac_update_freq=kfac_update_freq,
+                        gradient_clip = gradient_clip
+                        ) 
 
         super(KFAC, self).__init__(model.parameters(), defaults)
 
@@ -106,6 +110,7 @@ class KFAC(optim.Optimizer):
         self._register_modules(model)
 
         self.steps = 0
+        self.gradient_clip = gradient_clip      #"agc"
 
         # Dictionaries keyed by `module` to storing the factors and
         # eigendecompositions
@@ -144,9 +149,13 @@ class KFAC(optim.Optimizer):
         if log_writer:
             log_writer.add_scalar('KFAC/nu', self.nu,nEpoch)
             log_writer.add_scalar('KFAC/lr', self.lr,nEpoch)
-            log_writer.add_scalar('KFAC/damping', params['damping'],nEpoch)
-            log_writer.add_scalar('KFAC/fac_update_freq', params['fac_update_freq'],nEpoch)
-            log_writer.add_scalar('KFAC/kfac_update_freq', params['kfac_update_freq'],nEpoch)
+            # log_writer.add_scalar('KFAC/damping', params['damping'],nEpoch)                                 #0.003
+            # log_writer.add_scalar('KFAC/fac_update_freq', params['fac_update_freq'],nEpoch)               #1
+            # log_writer.add_scalar('KFAC/kfac_update_freq', params['kfac_update_freq'],nEpoch)             #10
+            # log_writer.add_scalar('KFAC/kA_norm', self.kA_norm,nEpoch)               #1
+            # log_writer.add_scalar('KFAC/kG_norm', self.kG_norm,nEpoch)
+            # log_writer.add_scalar('KFAC/W_norm', self.W_norm,nEpoch)               #1
+            # log_writer.add_scalar('KFAC/G_norm', self.G_norm,nEpoch)
         return info
 
     def _save_input(self, module, input):
@@ -326,7 +335,23 @@ class KFAC(optim.Optimizer):
             v = [v.view(module.weight.grad.data.size())]
         return v
 
-    def _update_scale_grad(self, updates):
+    # |krockneck(A,B)| = |A||B|
+    def _clip_grad_KNormal_(self, updates,eps = 1.e-3,clip=0.02):
+        self.nu=clip    
+        for module in self.modules:
+            grad = updates[module][0]
+            nR,nC = grad.shape
+            # g_norm = unitwise_norm(grad,axis=axis)
+            # self.G_norm += torch.norm(g_norm)
+            qG = self.m_QG[module]
+            qA = self.m_QA[module]    
+            if module.bias is not None:
+                qA = qA[:nC,:nC] 
+            grad = clip_grad_rc(grad,qG,row_major=True,eps = eps,clip=clip)        
+            grad = clip_grad_rc(grad,qA,row_major=False,eps = eps,clip=clip)  
+            module.weight.grad.data.copy_(grad)
+
+    def _update_scale_grad_0(self, updates):
         """Update the gradients in place and scale
 
         Updates the gradients in-place for all modules using the preconditioned
@@ -350,22 +375,54 @@ class KFAC(optim.Optimizer):
             if module.bias is not None:
                 module.bias.grad.data.copy_(v[1])
                 module.bias.grad.data.mul_(nu)
-    
-    def _update_scale_grad_0(self, updates):        
-        for module in self.modules:
-            vg_sum = 0
-            v = updates[module]
-            vg_sum += (v[0] * module.weight.grad.data * self.lr ** 2).sum().item()
-            if module.bias is not None:
-                vg_sum += (v[1] * module.bias.grad.data * self.lr ** 2).sum().item()
-            nu = min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
-            self.nu = nu
+   
+    def _update_scale_grad(self, updates,eps = 1.e-3,clip=0.02):    
+        self.kA_norm = 0
+        self.kG_norm = 0
+        self.W_norm = 0
+        self.G_norm = 0
+        if self.gradient_clip == "KNormal":
+            return self._clip_grad_KNormal_(updates,eps,clip)
+        elif self.gradient_clip != "agc":
+            return self._update_scale_grad_0(updates)
 
-            module.weight.grad.data.copy_(v[0])
-            module.weight.grad.data.mul_(nu)
-            if module.bias is not None:
-                module.bias.grad.data.copy_(v[1])
-                module.bias.grad.data.mul_(nu)
+        self.nu=clip    
+        for module in self.modules:
+            #   adaptive_grad_clip
+            self.kA_norm += torch.norm(self.m_QA[module])
+            self.kG_norm += torch.norm(self.m_QG[module])
+            grad = updates[module][0]
+            nR,nC = grad.shape
+            axis = 1 if nR>nC else 0
+            g_norm = unitwise_norm(grad,axis=axis)
+            W = module.weight.data
+            #W_norm = clip*torch.max( (W*W)**0.5, torch.zeros_like(W)+eps )      #clip*torch.max( (W*W)**0.5, eps )            #prevents zero-initialized parameters from always having their gradients clipped to zero.
+            W_norm = unitwise_norm(W,axis=axis)
+            self.W_norm += torch.norm(W_norm)
+            self.G_norm += torch.norm(g_norm)
+
+
+            grad = clip_grad_rc(grad,W,row_major=axis==1,eps = eps,clip=clip)   
+            module.weight.grad.data.copy_(grad)
+            if False and module.bias is not None:
+                v = updates[module][1]
+                axis = 0
+                b_grad = clip_grad_rc(v,module.bias.data,row_major=axis==1,eps = eps,clip=clip)  
+                module.bias.grad.data.copy_(b_grad)
+                 
+            # W_norm[W_norm<eps] = eps
+            # # clipped_grad = grad * (W_norm / g_norm)       
+            # s = torch.squeeze(clip*W_norm / (g_norm+1.0e-6))     
+            # s = torch.clamp(s, max=1)
+            # if s.numel()==nC:       #nC                
+            #     grad = grad*s                
+            # else:                   #nR           
+            #     grad = torch.einsum('rc,r->rc', grad, s)
+            
+            # if module.bias is not None:
+            #     v = updates[module][1]
+            #     module.bias.grad.data.copy_(v)
+
 
     def step(self, closure=None, epoch=None,accuracy=0):
         """Perform one K-FAC step

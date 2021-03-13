@@ -11,6 +11,7 @@
 *.userprefs
 
 logs
+logs_*
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/

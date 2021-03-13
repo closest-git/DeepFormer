@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange, repeat
 from torch import nn
-from .bert_transformer import *
+from .vit_transformer import *
 import lite_bert
 MIN_NUM_PATCHES = 16
 
@@ -118,6 +118,9 @@ class ViT(nn.Module):
             nn.LayerNorm(dim),
             nn.Linear(dim, num_classes)
         )
+    
+    def name_(self):
+       return "ViT_"
 
     def forward(self, img, mask = None):
         p = self.patch_size

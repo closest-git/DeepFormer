@@ -24,21 +24,28 @@ from utils import *
 from qhoptim.pyt import QHAdam
 
 import sys
-sys.path.append("G:/DeepFormer/")
+root_path = "G:/DeepFormer/"          #"/home/cys/transformer/DeepFormer/"  
+sys.path.append(root_path)
+
 import kfac     #export PYTHONPATH=$PYTHONPATH:/home/cys/net-help/kfac_distribute/
 from bert_image import *
 from vit_pytorch import ViT
 from torchvision.models import resnet50
 from vit_pytorch.distill import DistillableViT, DistillWrapper
 #   python pytorch_cifar10_resnet.py --kfac-update-freq=-10 --damping=0.003 --base-lr=0.1 --model=Jaggi 
+#   python pytorch_cifar10_resnet.py --kfac-update-freq=10 --damping=0.003 --base-lr=0.1 --batch-size=320 --model=Jaggi --gradient_clip=agc --self_attention=gabor 
 STEP_FIRST = LooseVersion(torch.__version__) < LooseVersion('1.1.0')
 datas_name = "cifar10"
 if datas_name == "cifar100":
     datas = datasets.CIFAR100
     nClass = 100
+    # IMAGE_W,IMAGE_H=32,32
+    IMAGE_W,IMAGE_H=64,64
 else:
     datas = datasets.CIFAR10
     nClass = 10
+    # IMAGE_W,IMAGE_H=32,32
+    IMAGE_W,IMAGE_H=64,64
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10/100 Example')
 parser.add_argument('--model', type=str, default='resnet32',
@@ -83,8 +90,11 @@ parser.add_argument('--damping-alpha', type=float, default=0.5,
                     help='KFAC damping decay factor (default: 0.5)')
 parser.add_argument('--damping-schedule', nargs='+', type=int, default=None,
                     help='KFAC damping decay schedule (default None)')
-parser.add_argument('--kl-clip', type=float, default=0.001,
-                    help='KL clip (default: 0.001)')
+
+parser.add_argument('--kl-clip', type=float, default=0.001,help='KL clip (default: 0.001)')
+parser.add_argument('--gradient_clip', type=str, default="agc",help='KL clip (default: 0.001)')
+parser.add_argument('--self_attention', type=str, default="gaussian",help='KL clip (default: 0.001)')
+
 parser.add_argument('--diag-blocks', type=int, default=1,
                     help='Number of blocks to approx layer factor with (default: 1)')
 parser.add_argument('--diag-warmup', type=int, default=5,
@@ -94,6 +104,7 @@ parser.add_argument('--distribute-layer-factors', action='store_true', default=F
 
 # Other Parameters
 parser.add_argument('--log-dir', default=f'./logs/{datas_name}/',help='TensorBoard log directory')
+#/home/cys/Downloads/{datas_name}/
 parser.add_argument('--dir', type=str, default=f'C:/Users/cys/Downloads/{datas_name}/', metavar='D',help='directory to download dataset to')
 parser.add_argument('--no-cuda', action='store_true', default=False,
                     help='disables CUDA training')
@@ -101,9 +112,11 @@ parser.add_argument('--seed', type=int, default=42, metavar='S',
                     help='random seed (default: 42)')
 parser.add_argument('--fp16-allreduce', action='store_true', default=False,
                     help='use fp16 compression during allreduce')
+parser.add_argument('--positional_encoding', type=str, default=f'')
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
+# args.stat_decay = 0       #nealy same 
 isHVD = "horovod" in sys.modules
 verbose = True
 device = 0
@@ -112,7 +125,42 @@ download = True
 num_replicas=1
 rank=0
 
+def clip_grad(model,eps = 1.e-3,clip=0.02,method="agc"):   
+    known_modules = {'Linear'} 
+    for module in model.modules():
+        classname = module.__class__.__name__   
+        if classname not in known_modules:
+            continue
+        if classname == 'Conv2d':
+            assert(False)
+            grad = None            
+        elif classname == 'BertLayerNorm':
+            grad = None
+        else:
+            grad = module.weight.grad.data       
+            W = module.weight.data 
+
+        #   adaptive_grad_clip
+        assert len(grad.shape)==2
+        nR,nC = grad.shape
+        axis = 1 if nR>nC else 0
+        g_norm = unitwise_norm(grad,axis=axis)
+        W_norm = unitwise_norm(W,axis=axis)
+        W_norm[W_norm<eps] = eps
+        # clipped_grad = grad * (W_norm / g_norm)       
+        s = torch.squeeze(clip*W_norm / (g_norm+1.0e-6))     
+        s = torch.clamp(s, max=1)
+        if s.numel()==nC:       #nC                
+            grad = grad*s                
+        else:                   #nR           
+            grad = torch.einsum('rc,r->rc', grad, s)
+        module.weight.grad.data.copy_(grad)
+
+        if module.bias is not None:
+            pass    #grad = torch.cat([grad, module.bias.grad.data.view(-1, 1)], 1)
+
 def train(epoch):
+    log_writer.epoch = epoch
     model.train()
     train_sampler.set_epoch(epoch)
     train_loss = Metric('train_loss')
@@ -131,6 +179,7 @@ def train(epoch):
     #           desc='Epoch {:3d}/{:3d}'.format(epoch + 1, config.epochs),
     #           disable=not verbose) as t:      always new line in WINDOWS!!!
     for batch_idx, (data, target) in enumerate(train_loader):
+        log_writer.batch_idx = batch_idx
         if args.cuda:                
             data, target = data.cuda(), target.cuda()
         optimizer.zero_grad()
@@ -162,8 +211,11 @@ def train(epoch):
         if isHVD:
             with optimizer.skip_synchronize():
                 optimizer.step()
-        else:
+        else:     
+            clip_grad(model)   #need this if LayerNormal=identity    
             optimizer.step()
+            
+            
 
         lr_opt = optimizer.param_groups[0]['lr']
         # t.set_postfix_str("lr={:.6f}, loss: {:.4f}, acc: {:.2f}%, {},T={:.1f}".format(lr_opt,train_loss.avg.item(), 100*acc,x_info,time.time()-t0))
@@ -244,19 +296,27 @@ if __name__ == "__main__":
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
+        transforms.Resize([IMAGE_W,IMAGE_H]),
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),        
+        # transforms.RandomErasing(),      #p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3), value=0, inplace=False
+        # random_erase( p=0.5, area_ratio_range=(0.02, 0.3), min_aspect_ratio=0.1, max_attempt=6),
+        # transforms.ToTensor(),
+        ])
     transform_test = transforms.Compose([
+        transforms.Resize([IMAGE_W,IMAGE_H]),
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
 
-
+        ])
 
     train_dataset = datas(root=args.dir, train=True,download=download, transform=transform_train)
     test_dataset = datas(root=args.dir, train=False,download=download, transform=transform_test)
 
     config = args
-
+    args.log_dir = os.path.join(f"{root_path}/logs/", "{}/__{}_{}_{}_{}".format(datas_name,args.model, sFac, sGPU,datetime.datetime.now().strftime('%m-%d_%H-%M')))
+    os.makedirs(args.log_dir, exist_ok=True)
+    log_writer = SummaryWriter(args.log_dir) if verbose else None
     model_name = args.model.lower()
 
     if model_name == "resnet20":
@@ -272,7 +332,7 @@ if __name__ == "__main__":
     elif model_name == "vit":
         #hidden=256,very BAD!!!
         #lr=0.001 nearly same
-        model = ViT(image_size = 32,patch_size = 4,num_classes = nClass,dim = 64,depth = 6,heads = 8,ff_hidden = 128,dropout = 0,emb_dropout = 0.1)    
+        model = ViT(image_size = 32,patch_size = 4,num_classes = nClass,dim = 21,depth = 6,heads = 3,ff_hidden = 128,dropout = 0,emb_dropout = 0.1)    
         # model = ImageTransformer(image_size=32, patch_size=4, num_classes=nClass, channels=3,dim=64, depth=6, heads=8, mlp_dim=128)          #
         # model = ViT(image_size = 256,patch_size = 32,num_classes = 1000,dim = 1024,depth = 6,eads = 16,mlp_dim = 2048,dropout = 0.1,emb_dropout = 0.1)
         #24 overfit
@@ -287,13 +347,17 @@ if __name__ == "__main__":
         model = LambdaResNet18()
         args.log_dir=f"./logs/lamlay/"
     elif model_name == "jaggi":
+        BertImage_config['use_attention'] = config.self_attention
+        BertImage_config['gradient_clip'] = config.gradient_clip
+        BertImage_config['INPUT_W'] = (int)(IMAGE_W / BertImage_config['pooling_concatenate_size'])
+        BertImage_config['INPUT_H'] = (int)(IMAGE_H / BertImage_config['pooling_concatenate_size'])
+        BertImage_config['logger'] = log_writer
+        BertImage_config['positional_encoding'] = config.positional_encoding
         model = BertImage(BertImage_config, num_classes=nClass)
         config = Namespace(**BertImage_config)
-        args.log_dir=f"/home/cys/net-help/kfac_distribute/logs/Jaggi/"
-        args.log_dir = "G:/DeepFormer/logs/"
-    args.log_dir = os.path.join(args.log_dir, "__{}_{}_{}_{}".format(args.model, sFac, sGPU,datetime.datetime.now().strftime('%m-%d_%H-%M')))
-    os.makedirs(args.log_dir, exist_ok=True)
-    log_writer = SummaryWriter(args.log_dir) if verbose else None
+        # args.log_dir=f"/home/cys/net-help/kfac_distribute/logs/Jaggi/"
+    
+    # config.log_writer = log_writer
     print(model)
     batch_size = config.batch_size
     if download and isHVD: hvd.allreduce(torch.tensor(1), name="barrier")
@@ -322,7 +386,7 @@ if __name__ == "__main__":
         optimizer = optim.Adam(model.parameters(), lr=0.003)        #QHAdam is nearly same as adam, much better than SGD
         # optimizer = optim.SGD(model.parameters(), lr=0.03, momentum=args.momentum,weight_decay=args.weight_decay)
     if model_name == "jaggi":
-        optimizer, lrs = Jaggi_get_optimizer(model.named_parameters(),BertImage_config)
+        optimizer, lrs = Jaggi_get_optimizer(train_loader,model.named_parameters(),BertImage_config)
         # lr_scheduler.append(lrs)
 
     if use_kfac:
@@ -336,6 +400,7 @@ if __name__ == "__main__":
         #                            distribute_layer_factors=args.distribute_layer_factors)
         preconditioner = kfac_core(model, lr=args.base_lr, factor_decay=args.stat_decay, 
                                 damping=args.damping, kl_clip=args.kl_clip, 
+                                gradient_clip = config.gradient_clip,
                                 fac_update_freq=args.kfac_cov_update_freq, 
                                 kfac_update_freq=args.kfac_update_freq,
                                 diag_blocks=args.diag_blocks,
@@ -349,7 +414,7 @@ if __name__ == "__main__":
     else:
         preconditioner = None
 
-    print(f"======== MODEL={model_name}\n======== optimizer={optimizer}\n======== preconditioner={preconditioner}")
+    print(f"======== optimizer={optimizer}\n\n======== MODEL={model.name_()}\n======== preconditioner={preconditioner}")
     # KFAC guarentees grads are equal across ranks before opt.step() is called
     # so if we do not use kfac we need to wrap the optimizer with horovodcon
     if isHVD:

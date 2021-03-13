@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import random
 import os
 import numpy as np
-from bert_image import BertLayerNorm
+from bert_image import Former_LayerNorm
 
 def try_contiguous(x):
     if not x.is_contiguous():
@@ -153,8 +153,8 @@ class ComputeG:
     def __call__(cls, g, layer, batch_averaged):
         if isinstance(layer, nn.Conv2d):
             cov_g = cls.conv2d(g, layer, batch_averaged)
-        elif isinstance(layer, BertLayerNorm):
-            cov_g = cls.conv2d(g, layer, batch_averaged)
+        # elif isinstance(layer, BertLayerNorm):
+        #     cov_g = cls.conv2d(g, layer, batch_averaged)
         elif isinstance(layer, nn.Linear):
             cov_g = cls.linear(g, layer, batch_averaged)
         else:

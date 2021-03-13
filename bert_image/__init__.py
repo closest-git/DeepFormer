@@ -12,4 +12,6 @@ from .resnet import *
 # from .mobilenet import *
 # from .mobilenetv2 import *
 from .transformer import *
-from .bert import BertLayerNorm
+from .bert import Former_LayerNorm
+from .position_encode import *
+from .some_utils import *
