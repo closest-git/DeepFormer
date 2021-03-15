@@ -4,9 +4,11 @@ The KFAC code was originally forked from https://github.com/gpauloski/kfac_pytor
 
 The VIT model was referenced from https://github.com/jeonsworld/ViT-pytorch       
 
+DeepFormer leverages several excellent libraries(hiddenlayer, torchstat, Visual Attribution...)  to visualize the secret of deep transformers.
+
 ### Requirements
 
-This code is validated to run with PyTorch v1.3
+This code is validated to run with PyTorch v1.3 
 
 ### Installation
 

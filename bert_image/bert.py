@@ -632,10 +632,11 @@ class Residual_Noraml(nn.Module):
 
 
 class BertAttention(nn.Module):
-    def __init__(self, config,hidden_in, output_attentions=False, keep_multihead_output=False):
+    def __init__(self, config,hidden_in, output_attentions=False, keep_multihead_output=False,title=""):
         super(BertAttention, self).__init__()
         self.output_attentions = output_attentions
         self.use_attention = config.use_attention
+        self.title = title
         #   MHSA - multi-head self-attention
         if False:   #v0.1
             self.flatten_image = not config.use_gaussian_attention and not config.use_learned_2d_encoding
@@ -660,7 +661,7 @@ class BertAttention(nn.Module):
                 attention_cls = GaborSelfAttention
             else:
                 attention_cls = BertSelfAttention
-            self.MHSA = attention_cls(config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output)
+            self.MHSA = attention_cls(config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output,title=self.title)
         self.config = config
 
         # self.self = attention_cls(config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output)
@@ -700,6 +701,7 @@ class BertAttention(nn.Module):
         self.self.reset_heads(heads)
 
     def forward(self, input_tensor, attention_mask, head_mask=None):
+        LOG = self.config.logger
         is_image = len(input_tensor.shape) == 4
         if is_image and self.flatten_image:
             batch, width, height, d = input_tensor.shape
@@ -709,6 +711,9 @@ class BertAttention(nn.Module):
         if self.output_attentions:
             attentions, self_output = self_output
         attention_output = self.residual(self_output, input_tensor)
+        if LOG.isPlot():
+            b, w, h, E = attention_output.shape
+            show_tensors(attention_output[0:64,:,:,0].contiguous().view(-1,1,w,h), nr_=8, pad_=2,title=f"an1_E{LOG.epoch}_@{self.title}")
 
         if is_image and self.flatten_image:
             attention_output = attention_output.view([batch, width, height, -1])
@@ -742,7 +747,7 @@ class BertLayer(nn.Module):
         self.config = config
         self.output_attentions = output_attentions
         self.attention = BertAttention(
-            config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output
+            config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output,title=self.name
         )
         self.intermediate = BertIntermediate(hidden_in,config)
         self.output = BertOutput(hidden_out,config)

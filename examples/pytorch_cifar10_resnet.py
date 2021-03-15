@@ -32,6 +32,7 @@ from bert_image import *
 from vit_pytorch import ViT
 from torchvision.models import resnet50
 from vit_pytorch.distill import DistillableViT, DistillWrapper
+from DeepGraph import build_graph
 #   python pytorch_cifar10_resnet.py --kfac-update-freq=-10 --damping=0.003 --base-lr=0.1 --model=Jaggi 
 #   python pytorch_cifar10_resnet.py --kfac-update-freq=10 --damping=0.003 --base-lr=0.1 --batch-size=320 --model=Jaggi --gradient_clip=agc --self_attention=gabor 
 STEP_FIRST = LooseVersion(torch.__version__) < LooseVersion('1.1.0')
@@ -125,6 +126,15 @@ download = True
 num_replicas=1
 rank=0
 
+class DeepLogger(SummaryWriter):
+    def __init__(self,*args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.epoch = -1
+        self.batch_idx = -1
+
+    def isPlot(self):
+        return self.batch_idx==2
+         
 def clip_grad(model,eps = 1.e-3,clip=0.02,method="agc"):   
     known_modules = {'Linear'} 
     for module in model.modules():
@@ -316,7 +326,8 @@ if __name__ == "__main__":
     config = args
     args.log_dir = os.path.join(f"{root_path}/logs/", "{}/__{}_{}_{}_{}".format(datas_name,args.model, sFac, sGPU,datetime.datetime.now().strftime('%m-%d_%H-%M')))
     os.makedirs(args.log_dir, exist_ok=True)
-    log_writer = SummaryWriter(args.log_dir) if verbose else None
+    # log_writer = SummaryWriter(args.log_dir) if verbose else None
+    log_writer = DeepLogger(args.log_dir) if verbose else None
     model_name = args.model.lower()
 
     if model_name == "resnet20":
@@ -351,6 +362,7 @@ if __name__ == "__main__":
         BertImage_config['gradient_clip'] = config.gradient_clip
         BertImage_config['INPUT_W'] = (int)(IMAGE_W / BertImage_config['pooling_concatenate_size'])
         BertImage_config['INPUT_H'] = (int)(IMAGE_H / BertImage_config['pooling_concatenate_size'])
+
         BertImage_config['logger'] = log_writer
         BertImage_config['positional_encoding'] = config.positional_encoding
         model = BertImage(BertImage_config, num_classes=nClass)
@@ -359,6 +371,8 @@ if __name__ == "__main__":
     
     # config.log_writer = log_writer
     print(model)
+    # g = build_graph(model, torch.zeros([1, 3, 64, 64]),path="./2.pdf")         # transforms=transforms
+
     batch_size = config.batch_size
     if download and isHVD: hvd.allreduce(torch.tensor(1), name="barrier")
     # Horovod: use DistributedSampler to partition the training data.

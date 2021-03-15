@@ -361,9 +361,10 @@ class GaborSelfAttention(nn.Module):
         R = R.float()
         return R 
 
-    def __init__(self, config, hidden_in,output_attentions=False, keep_multihead_output=False):
+    def __init__(self, config, hidden_in,output_attentions=False, keep_multihead_output=False,title=""):
         super().__init__()
         self.config = config
+        self.title = title+"_gabor"
         # self.attention_dropout = nn.Dropout(p=0.1)
         self.guided_filter = None   #SelfGuidedFilter(3,8,8)
         width,height = config.INPUT_W,  config.INPUT_H
@@ -475,9 +476,12 @@ class GaborSelfAttention(nn.Module):
         return attention_probs
 
     def forward(self, X, attention_mask, head_mask=None):
+        LOG = self.config.logger
         assert len(X.shape) == 4
         b, w, h, E = X.shape
         # H is the number of head(nHead = 8)    h is the height of image(32,224,...)
+        if LOG.isPlot():
+            show_tensors(X[0:64,:,:,0].contiguous().view(-1,1,w,h), nr_=8, pad_=2,title=f"X_E{LOG.epoch}_@{self.title}")
         if self.guided_filter is not None:
             X = self.guided_filter(X.permute(0,3,2,1)).permute(0,2,3,1)
             
@@ -498,6 +502,9 @@ class GaborSelfAttention(nn.Module):
 
         if self.multiQKV is not None:
             output_value += self.multiQKV(X)
+
+        if LOG.isPlot():
+            show_tensors(output_value[0:64,:,:,0].contiguous().view(-1,1,w,h), nr_=8, pad_=2,title=f"Result_E{LOG.epoch}_@{self.title}")
 
         if self.output_attentions:
             return attention_probs, output_value
