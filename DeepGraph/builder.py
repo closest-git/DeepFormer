@@ -94,13 +94,6 @@ def get_fn_name(fn, show_attrs, max_attr_chars):
     params = '\n'.join(attrstr % (k, truncate(str(v))) for (k, v) in attrs.items())
     return name + '\n' + sep + '\n' + params
 
-def resize_graph(dot, size_per_element=0.15, min_size=12):
-    num_rows = len(dot.body)
-    content_size = num_rows * size_per_element
-    size = max(min_size, content_size)
-    size_str = str(size) + "," + str(size)
-    dot.graph_attr.update(size=size_str)
-
 #  Generates graph using the backwards pass(The operator names are taken from the backward pass, so some of them are difficult to understand)
 def grad2Graph(graph,model,input,show_attrs=False, show_saved=False, max_attr_chars=50,transforms=None):    
     if LooseVersion(torch.__version__) < LooseVersion("1.9") and \
@@ -113,7 +106,6 @@ def grad2Graph(graph,model,input,show_attrs=False, show_saved=False, max_attr_ch
     y = model(input)
     var = y
     params=dict(model.named_parameters())
-    # dot = make_dot(y.mean(), params=dict(model.named_parameters()))
 
     if params is not None:
         assert all(isinstance(p, Variable) for p in params.values())
@@ -128,7 +120,7 @@ def grad2Graph(graph,model,input,show_attrs=False, show_saved=False, max_attr_ch
                      ranksep='0.1',
                      height='0.2',
                      fontname='monospace')
-    dot = Digraph(node_attr=node_attr, graph_attr=dict(size="12,12"))
+    dot = None  #Digraph(node_attr=node_attr, graph_attr=dict(size="12,12"))
     seen = set()
 
     def size_to_str(size):
@@ -166,17 +158,27 @@ def grad2Graph(graph,model,input,show_attrs=False, show_saved=False, max_attr_ch
             # if grad_accumulator, add the node for `.variable`
             var = fn.variable
             seen.add(var)
-            dot.node(str(id(var)), get_var_name(var), fillcolor='lightblue')
-            dot.edge(str(id(var)), str(id(fn)))
+            if dot is None:
+                graph.add_node(TaskNode(uid=id(var), name=get_var_name(var),op="variable", fillcolor='lightblue'))
+                graph.add_edge_by_id(id(var), id(fn))
+            else:
+                dot.node(str(id(var)), get_var_name(var), fillcolor='lightblue')
+                dot.edge(str(id(var)), str(id(fn)))
 
         # add the node for this grad_fn
-        dot.node(str(id(fn)), get_fn_name(fn, show_attrs, max_attr_chars))
+        if dot is None:
+            graph.add_node(TaskNode(uid=id(fn), name=get_fn_name(fn, show_attrs, max_attr_chars),op=f"{fn.__class__}"))
+        else:
+            dot.node(str(id(fn)), get_fn_name(fn, show_attrs, max_attr_chars))
 
         # recurse
         if hasattr(fn, 'next_functions'):
             for u in fn.next_functions:
                 if u[0] is not None:
-                    dot.edge(str(id(u[0])), str(id(fn)))
+                    if dot is None:                
+                        graph.add_edge_by_id(id(u[0]), id(fn))
+                    else:
+                        dot.edge(str(id(u[0])), str(id(fn)))
                     add_nodes(u[0])
 
         # note: this used to show .saved_tensors in pytorch0.2, but stopped
@@ -192,13 +194,27 @@ def grad2Graph(graph,model,input,show_attrs=False, show_saved=False, max_attr_ch
         if var in seen:
             return
         seen.add(var)
-        dot.node(str(id(var)), get_var_name(var), fillcolor=color)
+        if dot is not None:
+            dot.node(str(id(var)), get_var_name(var), fillcolor=color)
+        else:
+            # params = {k: torch_node[k] for k in torch_node.attributeNames()} 
+            # outputs = [o.unique() for o in torch_node.outputs()]
+            # shape = get_shape(torch_node)
+            op = "base_tensor"
+            node_ = TaskNode(uid=id(var), name=get_var_name(var), op=op, fillcolor=color)
+            graph.add_node(node_)
         if (var.grad_fn):
             add_nodes(var.grad_fn)
-            dot.edge(str(id(var.grad_fn)), str(id(var)))
+            if dot is None:                
+                graph.add_edge_by_id(id(var.grad_fn), id(var))
+            else:
+                dot.edge(str(id(var.grad_fn)), str(id(var)))
         if var._is_view():
             add_base_tensor(var._base, color='darkolivegreen3')
-            dot.edge(str(id(var._base)), str(id(var)), style="dotted")
+            if dot is None:                
+                graph.add_edge_by_id(id(var._base), id(var))
+            else:
+                dot.edge(str(id(var._base)), str(id(var)), style="dotted")
 
 
     # handle multiple outputs
@@ -208,10 +224,12 @@ def grad2Graph(graph,model,input,show_attrs=False, show_saved=False, max_attr_ch
     else:
         add_base_tensor(var)
 
-    resize_graph(dot)
-    dot.format = "pdf"
-    dot.render("./grad2graph.pdf",cleanup=True)
-    return dot
+    if dot is not None:
+        resize_graph(dot)
+        dot.format = "pdf"
+        dot.render("./grad2graph.pdf",cleanup=True)
+        return dot
+    return graph
 
 def trace2graph(graph, model, args, input_names=None, verbose=False):
     ver = LooseVersion(torch.__version__)
@@ -259,7 +277,7 @@ def trace2graph(graph, model, args, input_names=None, verbose=False):
                 graph.add_edge_by_id(pytorch_id(torch_node), pytorch_id(target_torch_node), shape)
     return graph
 
-def build_graph(model=None, args=None, input_names=None,transforms="default", framework_transforms="default",path=""):
+def plot_graph(model=None, args=None, input_names=None,transforms="default", framework_transforms="default",path=""):
     # Initialize an empty graph
     g = TaskGraph()
 
@@ -271,7 +289,7 @@ def build_graph(model=None, args=None, input_names=None,transforms="default", fr
         trace2graph(g, model, args)      # many bugs!
     else:
         grad2Graph(g, model, args) 
-    
+    g.save("./2.pdf")
     # Apply Transforms
     # if framework_transforms:
     #     if framework_transforms == "default":
@@ -286,7 +304,7 @@ def build_graph(model=None, args=None, input_names=None,transforms="default", fr
     #         g = t.apply(g)
     return g
 
-if __name__ == "__main__":
+def deep_graph_demo(path=""):
     # model = torchvision.models.resnet101()
     model = torchvision.models.resnet18()
 
@@ -309,6 +327,5 @@ if __name__ == "__main__":
     # ]
 
     # Display graph using the transforms above
-    g = build_graph(model, torch.zeros([1, 3, 224, 224]),transforms=None)
+    g = plot_graph(model, torch.zeros([1, 3, 224, 224]), transforms=None)
     # g.theme = g.graph.THEMES["blue"].copy()
-    g.save("./1.pdf")

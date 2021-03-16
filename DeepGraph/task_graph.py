@@ -14,6 +14,12 @@ from random import getrandbits
 import inspect
 import numpy as np
 
+def resize_graph(dot, size_per_element=0.15, min_size=12):
+    num_rows = len(dot.body)
+    content_size = num_rows * size_per_element
+    size = max(min_size, content_size)
+    size_str = str(size) + "," + str(size)
+    dot.graph_attr.update(size=size_str)
 
 THEMES = {
     "basic": {
@@ -53,14 +59,10 @@ def detect_framework(value):
             return "tensorflow"
 
 
-###########################################################################
-# Node
-###########################################################################
-
-class Node():
+class TaskNode():
     """Represents a framework-agnostic neural network layer in a directed graph."""
 
-    def __init__(self, uid, name, op, output_shape=None, params=None):
+    def __init__(self, uid, name, op, output_shape=None, params=None,fillcolor=""):
         """
         uid: unique ID for the layer that doesn't repeat in the computation graph.
         name: Name to display
@@ -70,6 +72,7 @@ class Node():
         self.name = name  # TODO: clarify the use of op vs name vs title
         self.op = op
         self.repeat = 1
+        self.fillcolor = fillcolor
         if output_shape:
             assert isinstance(output_shape, (tuple, list)),\
             "output_shape must be a tuple or list but received {}".format(type(output_shape))
@@ -317,28 +320,38 @@ class TaskGraph():
         from graphviz import Digraph
 
         # Build GraphViz Digraph
-        dot = Digraph()
-        dot.attr("graph", 
-                 bgcolor=self.theme["background_color"],
-                 color=self.theme["outline_color"],
-                 fontsize=self.theme["font_size"],
-                 fontcolor=self.theme["font_color"],
-                 fontname=self.theme["font_name"],
-                 margin=self.theme["margin"],
-                 rankdir="LR",
-                 pad=self.theme["padding"])
-        dot.attr("node", shape="box", 
-                 style="filled", margin="0,0",
-                 fillcolor=self.theme["fill_color"],
-                 color=self.theme["outline_color"],
-                 fontsize=self.theme["font_size"],
-                 fontcolor=self.theme["font_color"],
-                 fontname=self.theme["font_name"])
-        dot.attr("edge", style="solid", 
-                 color=self.theme["outline_color"],
-                 fontsize=self.theme["font_size"],
-                 fontcolor=self.theme["font_color"],
-                 fontname=self.theme["font_name"])
+        if False:       #   ugly!!!
+            dot = Digraph()
+            dot.attr("graph", 
+                    bgcolor=self.theme["background_color"],
+                    color=self.theme["outline_color"],
+                    fontsize=self.theme["font_size"],
+                    fontcolor=self.theme["font_color"],
+                    fontname=self.theme["font_name"],
+                    margin=self.theme["margin"],
+                    rankdir="LR",
+                    pad=self.theme["padding"])
+            dot.attr("node", shape="box", 
+                    style="filled", margin="0,0",
+                    fillcolor=self.theme["fill_color"],
+                    color=self.theme["outline_color"],
+                    fontsize=self.theme["font_size"],
+                    fontcolor=self.theme["font_color"],
+                    fontname=self.theme["font_name"])
+            dot.attr("edge", style="solid", 
+                    color=self.theme["outline_color"],
+                    fontsize=self.theme["font_size"],
+                    fontcolor=self.theme["font_color"],
+                    fontname=self.theme["font_name"])
+        else:
+            node_attr = dict(style='filled',
+                        shape='box',
+                        align='left',
+                        fontsize='10',
+                        ranksep='0.1',
+                        height='0.2',
+                        fontname='monospace')
+            dot = Digraph(node_attr=node_attr, graph_attr=dict(size="12,12"))
 
         for k, n in self.nodes.items():
             label = "<tr><td cellpadding='6'>{}</td></tr>".format(n.title)
@@ -347,7 +360,7 @@ class TaskGraph():
             if n.repeat > 1:
                 label += "<tr><td align='right' cellpadding='2'>x{}</td></tr>".format(n.repeat)
             label = "<<table border='0' cellborder='0' cellpadding='0'>" + label + "</table>>"
-            dot.node(str(k), label)
+            dot.node(str(k), label,fillcolor=n.fillcolor)
         for a, b, label in self.edges:
             if isinstance(label, (list, tuple)):
                 label = "x".join([str(l or "?") for l in label])
@@ -362,6 +375,7 @@ class TaskGraph():
     def save(self, path, format="pdf"):
         # TODO: assert on acceptable format values
         dot = self.build_dot()
+        resize_graph(dot)
         dot.format = format
         directory, file_name = os.path.split(path)
         # Remove extension from file name. dot.render() adds it.

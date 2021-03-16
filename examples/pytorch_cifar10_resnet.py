@@ -32,7 +32,7 @@ from bert_image import *
 from vit_pytorch import ViT
 from torchvision.models import resnet50
 from vit_pytorch.distill import DistillableViT, DistillWrapper
-from DeepGraph import build_graph
+from DeepGraph import *
 #   python pytorch_cifar10_resnet.py --kfac-update-freq=-10 --damping=0.003 --base-lr=0.1 --model=Jaggi 
 #   python pytorch_cifar10_resnet.py --kfac-update-freq=10 --damping=0.003 --base-lr=0.1 --batch-size=320 --model=Jaggi --gradient_clip=agc --self_attention=gabor 
 STEP_FIRST = LooseVersion(torch.__version__) < LooseVersion('1.1.0')
@@ -133,7 +133,8 @@ class DeepLogger(SummaryWriter):
         self.batch_idx = -1
 
     def isPlot(self):
-        return self.batch_idx==2
+        return False
+        #return self.batch_idx==2
          
 def clip_grad(model,eps = 1.e-3,clip=0.02,method="agc"):   
     known_modules = {'Linear'} 
@@ -276,6 +277,8 @@ def test(epoch):
         log_writer.add_scalar('test/accuracy', test_accuracy.avg, epoch)
 
 if __name__ == "__main__":
+    # deep_graph_demo()
+
     if isHVD:      #So strange!!! this would affect by TensorBoard
         print(f"hvd={hvd.local_rank()} size={hvd.size()}")
         verbose = True if hvd.rank() == 0 else False
@@ -371,7 +374,7 @@ if __name__ == "__main__":
     
     # config.log_writer = log_writer
     print(model)
-    # g = build_graph(model, torch.zeros([1, 3, 64, 64]),path="./2.pdf")         # transforms=transforms
+    # g = plot_graph(model, torch.zeros([1, 3, 64, 64]),path="./2.pdf")        #one more pass, would affect the training curve
 
     batch_size = config.batch_size
     if download and isHVD: hvd.allreduce(torch.tensor(1), name="barrier")
