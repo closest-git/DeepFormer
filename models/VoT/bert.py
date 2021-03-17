@@ -774,9 +774,9 @@ class BertLayer(nn.Module):
         return layer_output
 
 
-class BertEncoder(nn.Module):
+class ViTransformer(nn.Module):
     def __init__(self, config, output_attentions=False, keep_multihead_output=False,hidden_dim=None):
-        super(BertEncoder, self).__init__()
+        super(ViTransformer, self).__init__()
         self.output_attentions = output_attentions
         # layer_constructor = lambda: BertLayer(
         #     config, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output

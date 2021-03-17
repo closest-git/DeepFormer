@@ -8,7 +8,7 @@ from kfac.utils import update_running_avg
 from kfac.utils import try_contiguous
 from kfac.utils import cycle
 from kfac.utils import get_block_boundary
-from bert_image import *
+from models.VoT import *
 
 class KFAC(optim.Optimizer):
     """KFAC Distributed Gradient Preconditioner

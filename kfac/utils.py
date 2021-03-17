@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import random
 import os
 import numpy as np
-from bert_image import Former_LayerNorm
+# from ViTransformer import Former_LayerNorm
 
 def try_contiguous(x):
     if not x.is_contiguous():

@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 import random
-from .bert import BertEncoder, BertConfig
+from .bert import ViTransformer, BertConfig
 import torchvision.models as models
 from torch.autograd import Variable
 from enum import Enum
@@ -81,7 +81,7 @@ class ResBottom(nn.Module):
     def forward(self, batch):
         return self.seq(batch)
 
-BertImage_config = OrderedDict(
+VoT_config = OrderedDict(
     dataset="Cifar10",
     model="bert",
     
@@ -146,7 +146,7 @@ BertImage_config = OrderedDict(
     output_dir="./output.tmp",
 )
 
-class BertImage(nn.Module):
+class VoT(nn.Module):
     """
     Wrapper for a Bert encoder
     """
@@ -187,7 +187,7 @@ class BertImage(nn.Module):
         # self.features_downscale = nn.Linear(self.hidden_size, num_channels_in)
         
         # output all attentions, won't return them if self.output_attentions is False
-        self.encoder = BertEncoder(self.config, output_attentions=True,hidden_dim=self.hidden_dims)
+        self.encoder = ViTransformer(self.config, output_attentions=True,hidden_dim=self.hidden_dims)
         self.classifier = nn.Linear(self.hidden_dims[-1], num_classes)
         # self.classifier = nn.ModuleList([nn.Linear(self.hidden_dims[-1], self.hidden_dims[-1]),nn.Linear(self.hidden_dims[-1], num_classes)])
         # self.pixelizer = nn.Linear(self.hidden_size, 3)

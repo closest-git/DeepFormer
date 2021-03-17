@@ -28,7 +28,7 @@ root_path = "G:/DeepFormer/"          #"/home/cys/transformer/DeepFormer/"
 sys.path.append(root_path)
 
 import kfac     #export PYTHONPATH=$PYTHONPATH:/home/cys/net-help/kfac_distribute/
-from bert_image import *
+from models.VoT import *
 from vit_pytorch import ViT
 from torchvision.models import resnet50
 from vit_pytorch.distill import DistillableViT, DistillWrapper
@@ -361,15 +361,15 @@ if __name__ == "__main__":
         model = LambdaResNet18()
         args.log_dir=f"./logs/lamlay/"
     elif model_name == "jaggi":
-        BertImage_config['use_attention'] = config.self_attention
-        BertImage_config['gradient_clip'] = config.gradient_clip
-        BertImage_config['INPUT_W'] = (int)(IMAGE_W / BertImage_config['pooling_concatenate_size'])
-        BertImage_config['INPUT_H'] = (int)(IMAGE_H / BertImage_config['pooling_concatenate_size'])
+        VoT_config['use_attention'] = config.self_attention
+        VoT_config['gradient_clip'] = config.gradient_clip
+        VoT_config['INPUT_W'] = (int)(IMAGE_W / VoT_config['pooling_concatenate_size'])
+        VoT_config['INPUT_H'] = (int)(IMAGE_H / VoT_config['pooling_concatenate_size'])
 
-        BertImage_config['logger'] = log_writer
-        BertImage_config['positional_encoding'] = config.positional_encoding
-        model = BertImage(BertImage_config, num_classes=nClass)
-        config = Namespace(**BertImage_config)
+        VoT_config['logger'] = log_writer
+        VoT_config['positional_encoding'] = config.positional_encoding
+        model = VoT(VoT_config, num_classes=nClass)
+        config = Namespace(**VoT_config)
         # args.log_dir=f"/home/cys/net-help/kfac_distribute/logs/Jaggi/"
     
     # config.log_writer = log_writer    
@@ -404,7 +404,7 @@ if __name__ == "__main__":
         optimizer = optim.Adam(model.parameters(), lr=0.003)        #QHAdam is nearly same as adam, much better than SGD
         # optimizer = optim.SGD(model.parameters(), lr=0.03, momentum=args.momentum,weight_decay=args.weight_decay)
     if model_name == "jaggi":
-        optimizer, lrs = Jaggi_get_optimizer(train_loader,model.named_parameters(),BertImage_config)
+        optimizer, lrs = Jaggi_get_optimizer(train_loader,model.named_parameters(),VoT_config)
         # lr_scheduler.append(lrs)
 
     if use_kfac:
