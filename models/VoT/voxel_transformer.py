@@ -603,20 +603,20 @@ class BertSelfAttention(nn.Module):
             return attention_probs, context_layer
         return context_layer
 
+# class SublayerConnection(nn.Module):
+#     """
+#     A residual connection followed by a layer norm.
+#     Note for code simplicity the norm is first as opposed to last.
+#     """
 
-class BertOutput(nn.Module):
-    def __init__(self,hidden_out, config):
-        super(BertOutput, self).__init__()
-        self.dense = nn.Linear(config.intermediate_size, hidden_out)
-        self.LayerNorm = Former_LayerNorm(hidden_out, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+#     def __init__(self, size, dropout):
+#         super(SublayerConnection, self).__init__()
+#         self.norm = LayerNorm(size)
+#         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, hidden_states, input_tensor):
-        hidden_states = self.dense(hidden_states)
-        hidden_states = self.dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
-        return hidden_states
-
+#     def forward(self, x, sublayer):
+#         "Apply residual connection to any sublayer with the same size."
+#         return x + self.dropout(sublayer(self.norm(x)))
 class Residual_Noraml(nn.Module):
     def __init__(self,hidden_in, config):
         super(Residual_Noraml, self).__init__()
@@ -631,9 +631,9 @@ class Residual_Noraml(nn.Module):
         return hidden_states
 
 
-class BertAttention(nn.Module):
+class VoxAttention(nn.Module):
     def __init__(self, config,hidden_in, output_attentions=False, keep_multihead_output=False,title=""):
-        super(BertAttention, self).__init__()
+        super(VoxAttention, self).__init__()
         self.output_attentions = output_attentions
         self.use_attention = config.use_attention
         self.title = title
@@ -723,6 +723,18 @@ class BertAttention(nn.Module):
         return attention_output
 
 
+class BertOutput(nn.Module):
+    def __init__(self,hidden_out, config):
+        super(BertOutput, self).__init__()
+        self.dense = nn.Linear(config.intermediate_size, hidden_out)
+        self.LayerNorm = Former_LayerNorm(hidden_out, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def forward(self, hidden_states, input_tensor):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        return hidden_states
 class BertIntermediate(nn.Module):
     def __init__(self,hidden_in, config):
         super(BertIntermediate, self).__init__()
@@ -739,24 +751,46 @@ class BertIntermediate(nn.Module):
         hidden_states = self.intermediate_act_fn(hidden_states)
         return hidden_states
 
+#   https://ai.stackexchange.com/questions/15524/why-would-you-implement-the-position-wise-feed-forward-network-of-the-transforme
+class PositionwiseFeedForward(nn.Module):
+    "Implements FFN equation."
 
-class BertLayer(nn.Module):
+    def __init__(self, nIn, config):
+        super(PositionwiseFeedForward, self).__init__()
+        nX = config.intermediate_size
+        self.w_1 = nn.Linear(nIn, nX)
+        self.w_2 = nn.Linear(nX, nIn)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.activation = gelu
+        # self.activation = nn.ReLU()     # maybe use ReLU
+
+    def forward(self, x):
+        return self.w_2(self.dropout(self.activation(self.w_1(x))))
+
+class Encoder(nn.Module):
     def __init__(self, config, output_attentions=False, keep_multihead_output=False,hidden_in=128,hidden_out=128,id=0):
-        super(BertLayer, self).__init__()
+        super(Encoder, self).__init__()
         self.name = f"Lay{id}"
         self.config = config
         self.output_attentions = output_attentions
-        self.attention = BertAttention(
+        self.FFN_prehalf = PositionwiseFeedForward(hidden_in,config)
+        self.attention = VoxAttention(
             config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output,title=self.name
         )
-        self.intermediate = BertIntermediate(hidden_in,config)
-        self.output = BertOutput(hidden_out,config)
+        self.FFN = PositionwiseFeedForward(hidden_in,config)
+        if self.FFN is None:
+            self.intermediate = BertIntermediate(hidden_in,config)
+            self.output = BertOutput(hidden_out,config)
         # self.log_writer = self.config.logger        
 
     def forward(self, hidden_states, attention_mask, head_mask=None):
+        if self.FFN_prehalf is not None:        # Strang-Marchuk splitting scheme of convection-diffusion equation
+            hidden_states = hidden_states+self.FFN_prehalf(hidden_states)
         attention_output = self.attention(hidden_states, attention_mask, head_mask)    
         nMostPic = 64    
         width,height = self.config.INPUT_W,  self.config.INPUT_H
+
+
         if self.output_attentions:
             attentions, attention_output = attention_output
             # pics = attention_output[0:63,:,:,0].contiguous().view(-1,1,8,8)
@@ -767,22 +801,27 @@ class BertLayer(nn.Module):
                 title = f"{self.name}/{LOG.epoch}_{LOG.batch_idx}"
                 # LOG.add_image(title, grid, LOG.epoch)
                 # show_tensors(pics, nr_=8, pad_=10,title=f"{self.name}")
-        intermediate_output = self.intermediate(attention_output)
-        layer_output = self.output(intermediate_output, attention_output)
+        if self.FFN is None:
+            intermediate_output = self.intermediate(attention_output)
+            layer_output = self.output(intermediate_output, attention_output)
+        else:
+            #self.ff = Residual(PreNorm(hidden, PositionwiseFeedForward(d_model=hidden, d_ff=feed_forward_hidden, dropout=dropout)))
+            layer_output = attention_output+self.FFN(attention_output)
+
         if self.output_attentions:
             return attentions, layer_output
         return layer_output
 
-
-class ViTransformer(nn.Module):
+       
+class VoxTransformer(nn.Module):
     def __init__(self, config, output_attentions=False, keep_multihead_output=False,hidden_dim=None):
-        super(ViTransformer, self).__init__()
+        super(VoxTransformer, self).__init__()
         self.output_attentions = output_attentions
-        # layer_constructor = lambda: BertLayer(
+        # layer_constructor = lambda: Encoder(
         #     config, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output
         # )
         # self.layer = nn.ModuleList([layer_constructor() for _ in range(config.num_hidden_layers)])
-        self.layer = nn.ModuleList([BertLayer(
+        self.layer = nn.ModuleList([Encoder(
              config, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output,hidden_in=hidden_dim[id],hidden_out=hidden_dim[id+1],id=id
         ) for id in range(config.num_hidden_layers)])
 

@@ -12,6 +12,6 @@ from .resnet import *
 # from .mobilenet import *
 # from .mobilenetv2 import *
 from .module_VoT import *
-from .bert import Former_LayerNorm
+from .voxel_transformer import Former_LayerNorm
 from .position_encode import *
 from .some_utils import *
