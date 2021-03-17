@@ -10,9 +10,11 @@ Licensed under the MIT License
 from __future__ import absolute_import, division, print_function
 import re
 from .task_graph import *
+from .module_graph import *
 from graphviz import Digraph
 # from . import transforms as ht
 import torch
+from torch import nn
 import torchvision
 from torch.autograd import Variable
 import warnings
@@ -304,9 +306,34 @@ def plot_graph(model=None, args=None, input_names=None,transforms="default", fra
     #         g = t.apply(g)
     return g
 
-def deep_graph_demo(path=""):
+class MLP_3(nn.Module):
+    def __init__(self, sizes):
+        if len(sizes) < 2:
+            raise ValueError("Sizes represent the layer sizes and needs to have at least two values for one weight"
+                             " matrix to exist!")
+        self.sizes = sizes
+        self.w = []
+        for i, (inp, out) in enumerate(zip(self.sizes, self.sizes[1:])):
+            w_initial = torch.tensor(np.random.randn(inp + 1, out) * 0.01)
+            w = w_initial   #Variable(w_initial, name="w" + str(i))
+            self.w.append(w)
+
+    def _forward(self, x):
+        first_dim = x.shape[0]
+        bias = Variable(np.ones((first_dim, 1)), name="bias")
+        for i, w in enumerate(self.w):
+            x = Concat(x, bias, axis=1)
+            x = x @ w
+            if i < len(self.w) - 1:
+                x = ReLU(x)
+        return x
+
+def deep_graph_info_demo(path=""):
     # model = torchvision.models.resnet101()
-    model = torchvision.models.resnet18()
+    model = torchvision.models.vgg11()
+    module_stat(model, (3, 224, 224))  
+    # model = MLP_3([784, 32, 10])
+    # module_stat(model, (784))  
 
     # Rather than using the default transforms, build custom ones to group
     # nodes of residual and bottleneck blocks.

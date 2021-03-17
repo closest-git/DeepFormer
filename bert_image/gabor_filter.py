@@ -411,7 +411,7 @@ class GaborSelfAttention(nn.Module):
             MAX_WIDTH_HEIGHT = 50
             range_ = torch.arange(MAX_WIDTH_HEIGHT)
             grid = torch.cat([t.unsqueeze(-1) for t in torch.meshgrid([range_, range_])], dim=-1)
-            if self.isRXitas:
+            if self.isRXitas:   #need some time
                 listR=[]
                 for xita in numpy.linspace(0.0, 2.0*math.pi, num=self.num_attention_heads, endpoint=False):
                     listR.append(self.grid2RPE_5(grid,0)[:width,:height,:width,:height,:])

@@ -183,12 +183,13 @@ class BertImage(nn.Module):
         bert_config = BertConfig.from_dict(config)
         self.config = bert_config
 
-        self.features_upscale = nn.Linear(num_channels_in, self.hidden_dims[0])        #self.hidden_size
+        self.voxel_embedding = nn.Linear(num_channels_in, self.hidden_dims[0])        #just like the Token Embeddings in BERT
         # self.features_downscale = nn.Linear(self.hidden_size, num_channels_in)
         
         # output all attentions, won't return them if self.output_attentions is False
         self.encoder = BertEncoder(self.config, output_attentions=True,hidden_dim=self.hidden_dims)
         self.classifier = nn.Linear(self.hidden_dims[-1], num_classes)
+        # self.classifier = nn.ModuleList([nn.Linear(self.hidden_dims[-1], self.hidden_dims[-1]),nn.Linear(self.hidden_dims[-1], num_classes)])
         # self.pixelizer = nn.Linear(self.hidden_size, 3)
         self.register_buffer("attention_mask", torch.tensor(1.0))
         self.pos_encode = PositionalEncoding2D(128) if self.config.positional_encoding == "2D" else None
@@ -322,7 +323,7 @@ class BertImage(nn.Module):
 
         # feature upscale to BERT dimension
         
-        batch_features = self.features_upscale(batch_features)
+        batch_features = self.voxel_embedding(batch_features)
         if self.pos_encode is not None:
             ped = self.pos_encode(batch_features)
             batch_features += ped

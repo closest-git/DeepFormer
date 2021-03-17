@@ -277,7 +277,7 @@ def test(epoch):
         log_writer.add_scalar('test/accuracy', test_accuracy.avg, epoch)
 
 if __name__ == "__main__":
-    # deep_graph_demo()
+    # deep_graph_info_demo()
 
     if isHVD:      #So strange!!! this would affect by TensorBoard
         print(f"hvd={hvd.local_rank()} size={hvd.size()}")
@@ -372,9 +372,10 @@ if __name__ == "__main__":
         config = Namespace(**BertImage_config)
         # args.log_dir=f"/home/cys/net-help/kfac_distribute/logs/Jaggi/"
     
-    # config.log_writer = log_writer
-    print(model)
+    # config.log_writer = log_writer    
+    # module_stat(model, (3, 64, 64))  
     # g = plot_graph(model, torch.zeros([1, 3, 64, 64]),path="./2.pdf")        #one more pass, would affect the training curve
+    print(model)
 
     batch_size = config.batch_size
     if download and isHVD: hvd.allreduce(torch.tensor(1), name="barrier")

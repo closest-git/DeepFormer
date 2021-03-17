@@ -6,11 +6,43 @@ import torch.nn as nn
 import torch
 import torch.nn as nn
 from collections import OrderedDict
+from .stat_tree import *
+from .reporter import *
 # from torchstat import ModelHook
 # from torchstat import StatTree, StatNode, report_format
 # from torchstat import compute_madd
 # from torchstat import compute_flops
 # from torchstat import compute_memory
+
+def compute_madd(module, inp, out):
+    # if isinstance(module, nn.Conv2d):
+    #     return compute_Conv2d_madd(module, inp, out)
+    # elif isinstance(module, nn.ConvTranspose2d):
+    #     return compute_ConvTranspose2d_madd(module, inp, out)
+    # elif isinstance(module, nn.BatchNorm2d):
+    #     return compute_BatchNorm2d_madd(module, inp, out)
+    # elif isinstance(module, nn.MaxPool2d):
+    #     return compute_MaxPool2d_madd(module, inp, out)
+    # elif isinstance(module, nn.AvgPool2d):
+    #     return compute_AvgPool2d_madd(module, inp, out)
+    # elif isinstance(module, (nn.ReLU, nn.ReLU6)):
+    #     return compute_ReLU_madd(module, inp, out)
+    # elif isinstance(module, nn.Softmax):
+    #     return compute_Softmax_madd(module, inp, out)
+    # elif isinstance(module, nn.Linear):
+    #     return compute_Linear_madd(module, inp, out)
+    # elif isinstance(module, nn.Bilinear):
+    #     return compute_Bilinear_madd(module, inp[0], inp[1], out)
+    # else:
+    #     print(f"[MAdd]: {type(module).__name__} is not supported!")
+    #     return 0
+    return 0
+
+def compute_flops(module, inp, out):
+    return 0
+
+def compute_memory(module, inp, out):
+    return [0,0]
 
 class ModelHook(object):
     def __init__(self, model, input_size):
@@ -155,6 +187,35 @@ def convert_leaf_modules_to_stat_tree(leaf_modules):
                 node.Memory = leaf_module.Memory.numpy().tolist()
     return StatTree(root_node)
 
+def convert_leaf_modules_to_graph(leaf_modules):
+    assert isinstance(leaf_modules, OrderedDict)
+
+    create_index = 1
+    root_node = StatNode(name='root', parent=None)
+    for leaf_module_name, leaf_module in leaf_modules.items():
+        names = leaf_module_name.split('.')
+        for i in range(len(names)):
+            create_index += 1
+            stat_node_name = '.'.join(names[0:i+1])
+            parent_node = get_parent_node(root_node, stat_node_name)
+            label = names[i] if i == len(names) - 1 else  stat_node_name
+            node = StatNode(name=label, parent=parent_node)
+            # node.add_context(parent_node.name)
+            parent_node.add_child(node)
+            if i == len(names) - 1:  # leaf module itself
+                input_shape = leaf_module.input_shape.numpy().tolist()
+                output_shape = leaf_module.output_shape.numpy().tolist()
+                node.input_shape = input_shape
+                node.output_shape = output_shape
+                node.parameter_quantity = leaf_module.parameter_quantity.numpy()[0]
+                node.inference_memory = leaf_module.inference_memory.numpy()[0]
+                node.MAdd = leaf_module.MAdd.numpy()[0]
+                node.Flops = leaf_module.Flops.numpy()[0]
+                node.duration = leaf_module.duration.numpy()[0]
+                node.Memory = leaf_module.Memory.numpy().tolist()
+    tree = StatTree(root_node)
+    tree.plot(path="./logs/module_1.pdf")
+    return tree
 
 class ModelStat(object):
     def __init__(self, model, input_size, query_granularity=1):
@@ -175,8 +236,17 @@ class ModelStat(object):
         collected_nodes = self._analyze_model()
         report = report_format(collected_nodes)
         print(report)
+    
+    def plot_graph(self):
+        model_hook = ModelHook(self._model, self._input_size)
+        leaf_modules = model_hook.retrieve_leaf_modules()
+        stat_tree = convert_leaf_modules_to_graph(leaf_modules)
+        # collected_nodes = stat_tree.get_collected_stat_nodes(self._query_granularity)
+
+        return 
 
 
-def stat(model, input_size, query_granularity=1):
+def module_stat(model, input_size, query_granularity=1):
     ms = ModelStat(model, input_size, query_granularity)
-    ms.show_report()
+    # ms.show_report()
+    ms.plot_graph()
