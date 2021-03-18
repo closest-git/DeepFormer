@@ -691,25 +691,42 @@ class voxel_drift(nn.Module):
     def forward(self, x):
         return self.w_2(self.dropout(self.activation(self.w_1(x))))
 
+class voxel_vection(nn.Module):
+    "voxel_vection model by Yingshi Chen @2021/3/18"
+
+    def __init__(self, nIn,nHidden, config):
+        super(voxel_vection, self).__init__()
+        nX = nHidden
+        # self.w_1 = nn.Linear(nIn, nX)
+        # self.w_2 = nn.Linear(nX, nIn)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.activation = gelu
+        # self.activation = nn.ReLU()     # maybe use ReLU
+
+    def forward(self, x):
+        return self.dropout(self.activation(x))
+        # return self.w_2(self.dropout(self.activation(self.w_1(x))))
+
 class Encoder(nn.Module):
     def __init__(self, config, output_attentions=False, keep_multihead_output=False,hidden_in=128,hidden_out=128,id=0):
         super(Encoder, self).__init__()
         self.name = f"Lay{id}"
         self.config = config
         self.output_attentions = output_attentions
-        self.FFN_prehalf = PositionwiseFeedForward(hidden_in,config.intermediate_size,config)
+        self.drift = voxel_drift(hidden_in,config.intermediate_size,config)
         self.attention = VoxAttention(
             config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output,title=self.name
         )
-        self.FFN = PositionwiseFeedForward(hidden_in,48,config)
+        # self.FFN = PositionwiseFeedForward(hidden_in,48,config)
+        self.FFN = voxel_vection(hidden_in,48,config)
         if self.FFN is None:
             self.intermediate = BertIntermediate(hidden_in,config)
             self.output = BertOutput(hidden_out,config)
         # self.log_writer = self.config.logger        
 
     def forward(self, hidden_states, attention_mask, head_mask=None):
-        if self.FFN_prehalf is not None:        # Strang-Marchuk splitting scheme of convection-diffusion equation
-            hidden_states = hidden_states+self.FFN_prehalf(hidden_states)
+        if self.drift is not None:        # Strang-Marchuk splitting scheme of convection-diffusion equation
+            hidden_states = hidden_states+self.drift(hidden_states)
         attention_output = self.attention(hidden_states, attention_mask, head_mask)    
         nMostPic = 64    
         width,height = self.config.INPUT_W,  self.config.INPUT_H

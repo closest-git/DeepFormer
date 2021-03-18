@@ -103,7 +103,7 @@ VoT_config = OrderedDict(
 
     # === From BERT ===
     vocab_size_or_config_json_file=-1,
-    hidden_size=32,  # 128 400,768,
+    hidden_size=48,  # 128 400,768,
     position_encoding_size=-1,              # dimension of the position embedding for relative attention, if -1 will default to  hidden_size
     num_hidden_layers=3,        #2
     num_attention_heads=8,      #9
@@ -183,8 +183,8 @@ class VoT(nn.Module):
         bert_config = BertConfig.from_dict(config)
         self.config = bert_config
 
-        self.voxel_embedding = nn.Linear(num_channels_in, self.hidden_dims[0])        #just like the Token Embeddings in BERT
-        # self.features_downscale = nn.Linear(self.hidden_size, num_channels_in)
+        #self.voxel_embedding = nn.Linear(num_channels_in, self.hidden_dims[0])        #just like the Token Embeddings in BERT
+        self.voxel_embedding = None
         
         # output all attentions, won't return them if self.output_attentions is False
         self.encoder = VoxTransformer(self.config, output_attentions=True,hidden_dim=self.hidden_dims)
@@ -322,8 +322,8 @@ class VoT(nn.Module):
             batch_features = batch_features.permute(0, 2, 3, 1)
 
         # feature upscale to BERT dimension
-        
-        batch_features = self.voxel_embedding(batch_features)
+        if self.voxel_embedding is not None:
+            batch_features = self.voxel_embedding(batch_features)
         if self.pos_encode is not None:
             ped = self.pos_encode(batch_features)
             batch_features += ped
