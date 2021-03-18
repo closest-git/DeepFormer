@@ -13,6 +13,7 @@ from .reporter import *
 # from torchstat import compute_madd
 # from torchstat import compute_flops
 # from torchstat import compute_memory
+# https://stackoverflow.com/questions/49813723/how-to-create-an-edge-from-a-node-to-a-subgraph-in-graphviz-dot
 
 def compute_madd(module, inp, out):
     # if isinstance(module, nn.Conv2d):
