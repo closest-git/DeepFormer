@@ -97,7 +97,7 @@ VoT_config = OrderedDict(
     optimizer_learning_rate=0.1,
     optimizer_momentum=0.9,
     optimizer_weight_decay=0.0001,
-    batch_size=320,         #100,300
+    batch_size=128,         #100,300
     epochs=300,
     seed=42,
 
@@ -109,7 +109,7 @@ VoT_config = OrderedDict(
     num_attention_heads=8,      #9
     intermediate_size=512,
     hidden_act="gelu",             #"swish",
-    hidden_dropout_prob=0.1,
+    hidden_dropout_prob=0.1,        #0.5 is worse
     attention_probs_dropout_prob=0.1,
     max_position_embeddings=16,
     type_vocab_size=2,

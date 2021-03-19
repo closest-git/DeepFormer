@@ -675,37 +675,38 @@ class PositionwiseFeedForward(nn.Module):
         return self.w_2(self.dropout(self.activation(self.w_1(x))))
         # return self.dropout(self.activation(x))
 
-class voxel_drift(nn.Module):
-    "drift model by Yingshi Chen @2021/3/18"
+class voxel_gaussian(nn.Module):
+    "voxel_gaussian model by Yingshi Chen @2021/3/18"
 
     def __init__(self, nIn,nHidden, config):
-        super(voxel_drift, self).__init__()
-        assert nHidden>nIn*8
+        super(voxel_gaussian, self).__init__()
+        assert nHidden>=nIn*4
         nX = nHidden
         self.w_1 = nn.Linear(nIn, nX)
         self.w_2 = nn.Linear(nX, nIn)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.activation = gelu
-        # self.activation = nn.ReLU()     # maybe use ReLU
 
     def forward(self, x):
         return self.w_2(self.dropout(self.activation(self.w_1(x))))
+        # return self.w_2( self.w_1(x) )
 
 class voxel_vection(nn.Module):
     "voxel_vection model by Yingshi Chen @2021/3/18"
 
     def __init__(self, nIn,nHidden, config):
-        super(voxel_vection, self).__init__()
+        super(voxel_vection, self).__init__()       
         nX = nHidden
-        # self.w_1 = nn.Linear(nIn, nX)
-        # self.w_2 = nn.Linear(nX, nIn)
+        self.isSparse = False
+        self.w_1 = nn.Linear(nIn, nX)
+        self.w_2 = nn.Linear(nX, nIn)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.activation = gelu
-        # self.activation = nn.ReLU()     # maybe use ReLU
+        # self.activation = nn.ReLU()     # ReLU is little bad
 
     def forward(self, x):
-        return self.dropout(self.activation(x))
-        # return self.w_2(self.dropout(self.activation(self.w_1(x))))
+        # return self.dropout(self.activation(x))
+        return self.w_2(self.dropout(self.activation(self.w_1(x))))
 
 class Encoder(nn.Module):
     def __init__(self, config, output_attentions=False, keep_multihead_output=False,hidden_in=128,hidden_out=128,id=0):
@@ -713,20 +714,21 @@ class Encoder(nn.Module):
         self.name = f"Lay{id}"
         self.config = config
         self.output_attentions = output_attentions
-        self.drift = voxel_drift(hidden_in,config.intermediate_size,config)
+        self.gaussian_first = voxel_gaussian(hidden_in,config.intermediate_size//2,config)
         self.attention = VoxAttention(
             config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output,title=self.name
         )
+        # self.epsilon = torch.nn.Parameter(torch.tensor([0.0]))
         # self.FFN = PositionwiseFeedForward(hidden_in,48,config)
-        self.FFN = voxel_vection(hidden_in,48,config)
-        if self.FFN is None:
+        self.gaussian_second = voxel_gaussian(hidden_in,config.intermediate_size//2,config)
+        if self.gaussian_second is None:
             self.intermediate = BertIntermediate(hidden_in,config)
             self.output = BertOutput(hidden_out,config)
         # self.log_writer = self.config.logger        
 
     def forward(self, hidden_states, attention_mask, head_mask=None):
-        if self.drift is not None:        # Strang-Marchuk splitting scheme of convection-diffusion equation
-            hidden_states = hidden_states+self.drift(hidden_states)
+        if self.gaussian_first is not None:        # Strang-Marchuk splitting scheme of convection-diffusion equation
+            hidden_states = hidden_states+self.gaussian_first(hidden_states)
         attention_output = self.attention(hidden_states, attention_mask, head_mask)    
         nMostPic = 64    
         width,height = self.config.INPUT_W,  self.config.INPUT_H
@@ -742,12 +744,12 @@ class Encoder(nn.Module):
                 title = f"{self.name}/{LOG.epoch}_{LOG.batch_idx}"
                 # LOG.add_image(title, grid, LOG.epoch)
                 # show_tensors(pics, nr_=8, pad_=10,title=f"{self.name}")
-        if self.FFN is None:
+        if self.gaussian_second is None:
             intermediate_output = self.intermediate(attention_output)
             layer_output = self.output(intermediate_output, attention_output)
         else:
             #self.ff = Residual(PreNorm(hidden, PositionwiseFeedForward(d_model=hidden, d_ff=feed_forward_hidden, dropout=dropout)))
-            layer_output = attention_output+self.FFN(attention_output)
+            layer_output = attention_output+self.gaussian_second(attention_output)
 
         if self.output_attentions:
             return attentions, layer_output
