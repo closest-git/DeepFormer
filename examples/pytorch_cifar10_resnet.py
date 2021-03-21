@@ -22,12 +22,14 @@ import cifar_resnet as resnet
 from tqdm import tqdm
 from utils import *
 from qhoptim.pyt import QHAdam
-
+from os.path import dirname, abspath
 import sys
-root_path = "G:/DeepFormer/"          #"/home/cys/transformer/DeepFormer/"  
+root_path = dirname(dirname(abspath(__file__)))          #"/home/cys/transformer/DeepFormer/"      "G:/DeepFormer"
+# sys.path.insert(1, os.path.join(sys.path[0], '..'))
 sys.path.append(root_path)
 
 import kfac     #export PYTHONPATH=$PYTHONPATH:/home/cys/net-help/kfac_distribute/
+from models import config
 from models.VoT import *
 from vit_pytorch import ViT
 from torchvision.models import resnet50
@@ -48,75 +50,75 @@ else:
     # IMAGE_W,IMAGE_H=32,32
     IMAGE_W,IMAGE_H=64,64
 # Training settings
-parser = argparse.ArgumentParser(description='PyTorch CIFAR10/100 Example')
-parser.add_argument('--model', type=str, default='resnet32',
-                    help='ResNet model to use [20, 32, 56]')
-parser.add_argument('--batch-size', type=int, default=128, metavar='N',
-                    help='input batch size for training (default: 128)')
-parser.add_argument('--test-batch-size', type=int, default=128, metavar='N',
-                    help='input batch size for testing (default: 128)')
-parser.add_argument('--epochs', type=int, default=200, metavar='N',
-                    help='number of epochs to train (default: 200)')
-parser.add_argument('--warmup-epochs', type=int, default=5, metavar='WE',
-                    help='number of warmup epochs (default: 5)')
-parser.add_argument('--batches-per-allreduce', type=int, default=1,
-                    help='number of batches processed locally before '
-                         'executing allreduce across workers; it multiplies '
-                         'total batch size.')
+# parser = argparse.ArgumentParser(description='PyTorch CIFAR10/100 Example')
+# parser.add_argument('--model', type=str, default='resnet32',
+#                     help='ResNet model to use [20, 32, 56]')
+# parser.add_argument('--batch-size', type=int, default=128, metavar='N',
+#                     help='input batch size for training (default: 128)')
+# parser.add_argument('--test-batch-size', type=int, default=128, metavar='N',
+#                     help='input batch size for testing (default: 128)')
+# parser.add_argument('--epochs', type=int, default=200, metavar='N',
+#                     help='number of epochs to train (default: 200)')
+# parser.add_argument('--warmup-epochs', type=int, default=5, metavar='WE',
+#                     help='number of warmup epochs (default: 5)')
+# parser.add_argument('--batches-per-allreduce', type=int, default=1,
+#                     help='number of batches processed locally before '
+#                          'executing allreduce across workers; it multiplies '
+#                          'total batch size.')
 
-# Optimizer Parameters
-parser.add_argument('--base-lr', type=float, default=0.1, metavar='LR',
-                    help='base learning rate (default: 0.1)')
-parser.add_argument('--lr-decay', nargs='+', type=int, default=[100, 150],
-                    help='epoch intervals to decay lr')
-parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
-                    help='SGD momentum (default: 0.9)')
-parser.add_argument('--weight-decay', type=float, default=5e-4, metavar='W',
-                    help='SGD weight decay (default: 5e-4)')
+# # Optimizer Parameters
+# parser.add_argument('--base-lr', type=float, default=0.1, metavar='LR',
+#                     help='base learning rate (default: 0.1)')
+# parser.add_argument('--lr-decay', nargs='+', type=int, default=[100, 150],
+#                     help='epoch intervals to decay lr')
+# parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
+#                     help='SGD momentum (default: 0.9)')
+# parser.add_argument('--weight-decay', type=float, default=5e-4, metavar='W',
+#                     help='SGD weight decay (default: 5e-4)')
 
-# KFAC Parameters
-parser.add_argument('--kfac-update-freq', type=int, default=10,
-                    help='iters between kfac inv ops (0 for no kfac updates) (default: 10)')
-parser.add_argument('--kfac-cov-update-freq', type=int, default=1,
-                    help='iters between kfac cov ops (default: 1)')
-parser.add_argument('--kfac-update-freq-alpha', type=float, default=10,
-                    help='KFAC update freq multiplier (default: 10)')
-parser.add_argument('--kfac-update-freq-schedule', nargs='+', type=int, default=None,
-                    help='KFAC update freq schedule (default None)')
-parser.add_argument('--stat-decay', type=float, default=0.95,
-                    help='Alpha value for covariance accumulation (default: 0.95)')
-parser.add_argument('--damping', type=float, default=0.003,
-                    help='KFAC damping factor (defaultL 0.003)')
-parser.add_argument('--damping-alpha', type=float, default=0.5,
-                    help='KFAC damping decay factor (default: 0.5)')
-parser.add_argument('--damping-schedule', nargs='+', type=int, default=None,
-                    help='KFAC damping decay schedule (default None)')
+# # KFAC Parameters
+# parser.add_argument('--kfac-update-freq', type=int, default=10,
+#                     help='iters between kfac inv ops (0 for no kfac updates) (default: 10)')
+# parser.add_argument('--kfac-cov-update-freq', type=int, default=1,
+#                     help='iters between kfac cov ops (default: 1)')
+# parser.add_argument('--kfac-update-freq-alpha', type=float, default=10,
+#                     help='KFAC update freq multiplier (default: 10)')
+# parser.add_argument('--kfac-update-freq-schedule', nargs='+', type=int, default=None,
+#                     help='KFAC update freq schedule (default None)')
+# parser.add_argument('--stat-decay', type=float, default=0.95,
+#                     help='Alpha value for covariance accumulation (default: 0.95)')
+# parser.add_argument('--damping', type=float, default=0.003,
+#                     help='KFAC damping factor (defaultL 0.003)')
+# parser.add_argument('--damping-alpha', type=float, default=0.5,
+#                     help='KFAC damping decay factor (default: 0.5)')
+# parser.add_argument('--damping-schedule', nargs='+', type=int, default=None,
+#                     help='KFAC damping decay schedule (default None)')
 
-parser.add_argument('--kl-clip', type=float, default=0.001,help='KL clip (default: 0.001)')
-parser.add_argument('--gradient_clip', type=str, default="agc",help='KL clip (default: 0.001)')
-parser.add_argument('--self_attention', type=str, default="gaussian",help='KL clip (default: 0.001)')
+# parser.add_argument('--kl-clip', type=float, default=0.001,help='KL clip (default: 0.001)')
+# parser.add_argument('--gradient_clip', type=str, default="agc",help='KL clip (default: 0.001)')
+# parser.add_argument('--self_attention', type=str, default="gaussian",help='KL clip (default: 0.001)')
 
-parser.add_argument('--diag-blocks', type=int, default=1,
-                    help='Number of blocks to approx layer factor with (default: 1)')
-parser.add_argument('--diag-warmup', type=int, default=5,
-                    help='Epoch to start diag block approximation at (default: 5)')
-parser.add_argument('--distribute-layer-factors', action='store_true', default=False,
-                    help='Compute A and G for a single layer on different workers')
+# parser.add_argument('--diag-blocks', type=int, default=1,
+#                     help='Number of blocks to approx layer factor with (default: 1)')
+# parser.add_argument('--diag-warmup', type=int, default=5,
+#                     help='Epoch to start diag block approximation at (default: 5)')
+# parser.add_argument('--distribute-layer-factors', action='store_true', default=False,
+#                     help='Compute A and G for a single layer on different workers')
 
-# Other Parameters
-parser.add_argument('--log-dir', default=f'./logs/{datas_name}/',help='TensorBoard log directory')
-#/home/cys/Downloads/{datas_name}/
-parser.add_argument('--dir', type=str, default=f'C:/Users/cys/Downloads/{datas_name}/', metavar='D',help='directory to download dataset to')
-parser.add_argument('--no-cuda', action='store_true', default=False,
-                    help='disables CUDA training')
-parser.add_argument('--seed', type=int, default=42, metavar='S',
-                    help='random seed (default: 42)')
-parser.add_argument('--fp16-allreduce', action='store_true', default=False,
-                    help='use fp16 compression during allreduce')
-parser.add_argument('--positional_encoding', type=str, default=f'')
+# # Other Parameters
+# parser.add_argument('--log-dir', default=f'./logs/{datas_name}/',help='TensorBoard log directory')
+# #/home/cys/Downloads/{datas_name}/
+# parser.add_argument('--dir', type=str, default=f'C:/Users/cys/Downloads/{datas_name}/', metavar='D',help='directory to download dataset to')
+# parser.add_argument('--no-cuda', action='store_true', default=False,
+#                     help='disables CUDA training')
+# parser.add_argument('--seed', type=int, default=42, metavar='S',
+#                     help='random seed (default: 42)')
+# parser.add_argument('--fp16-allreduce', action='store_true', default=False,
+#                     help='use fp16 compression during allreduce')
+# parser.add_argument('--positional_encoding', type=str, default=f'')
 
-args = parser.parse_args()
-args.cuda = not args.no_cuda and torch.cuda.is_available()
+# args = parser.parse_args()
+# args.cuda = not args.no_cuda and torch.cuda.is_available()
 # args.stat_decay = 0       #nealy same 
 isHVD = "horovod" in sys.modules
 verbose = True
@@ -278,6 +280,9 @@ def test(epoch):
 
 if __name__ == "__main__":
     # deep_graph_info_demo()
+    parser = config.get_training_parser(datas_name,desc='PyTorch CIFAR10/100 Example')
+    args = config.parse_args_and_arch(parser)
+    args.cuda = not args.no_cuda and torch.cuda.is_available()
 
     if isHVD:      #So strange!!! this would affect by TensorBoard
         print(f"hvd={hvd.local_rank()} size={hvd.size()}")

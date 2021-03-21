@@ -97,7 +97,7 @@ VoT_config = OrderedDict(
     optimizer_learning_rate=0.1,
     optimizer_momentum=0.9,
     optimizer_weight_decay=0.0001,
-    batch_size=128,         #100,300
+    batch_size=320,         #100,300,128 would fail for numerical instability
     epochs=300,
     seed=42,
 

@@ -680,16 +680,19 @@ class voxel_gaussian(nn.Module):
 
     def __init__(self, nIn,nHidden, config):
         super(voxel_gaussian, self).__init__()
-        assert nHidden>=nIn*4
-        nX = nHidden
-        self.w_1 = nn.Linear(nIn, nX)
-        self.w_2 = nn.Linear(nX, nIn)
+        self.nHidden = nHidden
+        if self.nHidden>0:
+            # assert nHidden>=nIn*4
+            self.w_1 = nn.Linear(nIn, self.nHidden)
+            self.w_2 = nn.Linear(self.nHidden, nIn)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.activation = gelu
 
     def forward(self, x):
-        return self.w_2(self.dropout(self.activation(self.w_1(x))))
-        # return self.w_2( self.w_1(x) )
+        if self.nHidden>0:
+            return self.w_2(self.dropout(self.activation(self.w_1(x))))
+        else:
+            return self.dropout(self.activation(x))
 
 class voxel_vection(nn.Module):
     "voxel_vection model by Yingshi Chen @2021/3/18"
@@ -714,13 +717,13 @@ class Encoder(nn.Module):
         self.name = f"Lay{id}"
         self.config = config
         self.output_attentions = output_attentions
-        self.gaussian_first = voxel_gaussian(hidden_in,config.intermediate_size//2,config)
+        self.gaussian_first = voxel_gaussian(hidden_in,config.intermediate_size,config)
         self.attention = VoxAttention(
             config,hidden_in, output_attentions=output_attentions, keep_multihead_output=keep_multihead_output,title=self.name
         )
         # self.epsilon = torch.nn.Parameter(torch.tensor([0.0]))
         # self.FFN = PositionwiseFeedForward(hidden_in,48,config)
-        self.gaussian_second = voxel_gaussian(hidden_in,config.intermediate_size//2,config)
+        self.gaussian_second = voxel_gaussian(hidden_in,48,config)
         if self.gaussian_second is None:
             self.intermediate = BertIntermediate(hidden_in,config)
             self.output = BertOutput(hidden_out,config)
