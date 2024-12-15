@@ -1,25 +1,5 @@
-# Deep Vision Transformers with K-FAC optimizer & gabor attention
-
-The KFAC code was originally forked from https://github.com/gpauloski/kfac_pytorch       
-
-The VIT model was referenced from https://github.com/jeonsworld/ViT-pytorch       
-
-DeepFormer leverages several excellent libraries(hiddenlayer, torchstat, torchsummary...)  to visualize the secret of deep transformers.
-
-### Requirements
-
-This code is validated to run with PyTorch v1.3 
-
-### Installation
-
-```
-$ git clone https://github.com/closest-git/DeepFormer.git
-$ cd 
-$ pip install .
-```
-
-## Usage
-
+# Overview
+This is an experimental project for in-depth study of transformer. For the latest  developments, please visit https://github.com/gruai/koifish. 
 
 ## Citation
 
